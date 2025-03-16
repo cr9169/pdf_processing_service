@@ -14,11 +14,19 @@ using UglyToad.PdfPig.Content;
 
 namespace PdfProcessingService.Helpers
 {
+    /// <summary>
+    /// Extracts text content from PDF files and organizes it into manageable chunks.
+    /// </summary>
     public class PdfTextExtractor
     {
         private readonly ILogger _logger;
         private readonly PdfProcessingSettings _settings;
 
+        /// <summary>
+        /// Initializes a new instance of the PdfTextExtractor class.
+        /// </summary>
+        /// <param name="logger">Logger for tracking extraction operations.</param>
+        /// <param name="settings">Settings that control processing behavior.</param>
         public PdfTextExtractor(
             ILogger logger,
             PdfProcessingSettings settings)
@@ -27,15 +35,24 @@ namespace PdfProcessingService.Helpers
             _settings = settings;
         }
 
+        /// <summary>
+        /// Extracts text from a PDF file and splits it into manageable chunks.
+        /// </summary>
+        /// <param name="filePath">Path to the PDF file.</param>
+        /// <param name="fileIdentifier">Unique identifier for the file.</param>
+        /// <param name="benchmarks">Dictionary to store performance metrics.</param>
+        /// <returns>
+        /// A tuple containing: list of document chunks, total page count, success indicator, and any error message.
+        /// </returns>
         public async Task<(List<PdfDocumentChunk> Chunks, int PageCount, bool Success, string ErrorMessage)> ExtractTextAsync(
             string filePath,
             string fileIdentifier,
             Dictionary<string, double> benchmarks)
         {
             _logger.LogInformation("Beginning text extraction from PDF file: {FilePath}", filePath);
-            
-            // Return the result of an async operation to make this method truly async
-            return await Task.Run(() => 
+
+            // Run extraction on a background thread to keep the API responsive
+            return await Task.Run(() =>
             {
                 var chunks = new List<PdfDocumentChunk>();
                 var chunkBuilder = new StringBuilder();
@@ -45,7 +62,7 @@ namespace PdfProcessingService.Helpers
 
                 try
                 {
-                    // First, use PdfPig to get page count for progress tracking
+                    // First use PdfPig to get page count - it's lightweight for this operation
                     using (var pdfPigDoc = UglyToad.PdfPig.PdfDocument.Open(filePath))
                     {
                         totalPages = pdfPigDoc.NumberOfPages;
@@ -56,13 +73,13 @@ namespace PdfProcessingService.Helpers
                     var fileInfo = new FileInfo(filePath);
                     var fileName = Path.GetFileName(filePath);
 
-                    // Now use iText for better text extraction
+                    // Use iText for better text extraction quality
                     using (var pdfReader = new PdfReader(filePath))
                     using (var pdfDocument = new iText.Kernel.Pdf.PdfDocument(pdfReader))
                     {
                         for (int i = 1; i <= totalPages; i++)
                         {
-                            // Prevent memory leaks by creating a new listener for each page
+                            // Create a new listener for each page to prevent memory leaks
                             var textExtractionStrategy = new LocationTextExtractionStrategy();
 
                             using (var perfTracker = new PerformanceTracker(
@@ -77,6 +94,7 @@ namespace PdfProcessingService.Helpers
                                     PdfPage page = pdfDocument.GetPage(i);
                                     pageText = iText.Kernel.Pdf.Canvas.Parser.PdfTextExtractor.GetTextFromPage(page, textExtractionStrategy);
 
+                                    // Handle empty pages or pages with non-extractable content
                                     if (string.IsNullOrWhiteSpace(pageText))
                                     {
                                         _logger.LogInformation("Page {PageNumber} contains no extractable text", i);
@@ -85,11 +103,12 @@ namespace PdfProcessingService.Helpers
                                 }
                                 catch (Exception ex)
                                 {
+                                    // Continue processing even if individual page extraction fails
                                     _logger.LogError(ex, "Error extracting text from page {PageNumber}", i);
                                     pageText = $"[Error extracting text from page {i}: {ex.Message}]";
                                 }
 
-                                // Add page text to the current chunk
+                                // Add page text to the current chunk with page markers
                                 chunkBuilder.AppendLine($"--- Page {i} ---");
                                 chunkBuilder.AppendLine(pageText);
                                 chunkBuilder.AppendLine();
@@ -97,7 +116,7 @@ namespace PdfProcessingService.Helpers
                                 _logger.LogDebug("Page {PageNumber}/{TotalPages}: Extracted {CharCount} characters", i, totalPages, pageText.Length);
                             }
 
-                            // Check if we need to create a new chunk due to size
+                            // Create a new chunk when size limit reached or at the end of document
                             if (chunkBuilder.Length * sizeof(char) >= _settings.ChunkSizeInBytes || i == totalPages)
                             {
                                 var chunk = new PdfDocumentChunk
@@ -128,7 +147,7 @@ namespace PdfProcessingService.Helpers
                         }
                     }
 
-                    // Update total chunks count in each chunk
+                    // Update total chunks count in each chunk for consistency
                     foreach (var chunk in chunks)
                     {
                         chunk.TotalChunks = chunks.Count;

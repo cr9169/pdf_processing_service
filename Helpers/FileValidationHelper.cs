@@ -6,8 +6,18 @@ using System.Threading.Tasks;
 
 namespace PdfProcessingService.Helpers
 {
+    /// <summary>
+    /// Provides validation functions for PDF files.
+    /// </summary>
     public static class FileValidationHelper
     {
+        /// <summary>
+        /// Validates that a file exists, is a PDF, and meets size requirements.
+        /// </summary>
+        /// <param name="filePath">Path to the file to validate.</param>
+        /// <param name="settings">Settings containing validation constraints.</param>
+        /// <param name="logger">Logger for recording validation results.</param>
+        /// <returns>A tuple indicating if the file is valid and any error message.</returns>
         public static async Task<(bool IsValid, string ErrorMessage)> ValidatePdfFileAsync(
             string filePath,
             PdfProcessingSettings settings,
@@ -40,7 +50,7 @@ namespace PdfProcessingService.Helpers
                     return (false, $"File exceeds maximum size of {settings.MaxFileSizeInBytes / (1024 * 1024)}MB");
                 }
 
-                // Verify PDF header
+                // Verify PDF header - checks for the %PDF- signature at the start of the file
                 using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true))
                 {
                     byte[] buffer = new byte[5];
