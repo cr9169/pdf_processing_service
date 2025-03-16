@@ -10,7 +10,7 @@ namespace PdfProcessingService.Services
     /// This interface represents the primary service for processing PDF documents,
     /// including extraction of text content and indexing in search systems.
     /// </remarks>
-    public interface IPdfService
+    public interface IExtractService
     {
         /// <summary>
         /// Processes a PDF file asynchronously.
@@ -25,6 +25,6 @@ namespace PdfProcessingService.Services
         /// splitting into searchable chunks, and indexing in the search system.
         /// Performance metrics are collected throughout the process.
         /// </remarks>
-        Task<PdfProcessingResponse> ProcessPdfFileAsync(string filePath);
+        Task<PdfProcessingResponse> ProcessFileAsync(string filePath);
     }
 }

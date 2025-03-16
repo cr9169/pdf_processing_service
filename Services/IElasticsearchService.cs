@@ -35,7 +35,7 @@ namespace PdfProcessingService.Services
         /// Use this method for single-document operations. For better performance
         /// with multiple chunks, consider using <see cref="BulkIndexChunksAsync"/>.
         /// </remarks>
-        Task<bool> IndexChunkAsync(PdfDocumentChunk chunk);
+        Task<bool> IndexChunkAsync(DocumentChunk chunk);
 
         /// <summary>
         /// Indexes multiple PDF document chunks in Elasticsearch using bulk operations.
@@ -48,6 +48,6 @@ namespace PdfProcessingService.Services
         /// This method is optimized for indexing multiple chunks at once, 
         /// providing better performance than indexing individual chunks separately.
         /// </remarks>
-        Task<bool> BulkIndexChunksAsync(IEnumerable<PdfDocumentChunk> chunks);
+        Task<bool> BulkIndexChunksAsync(IEnumerable<DocumentChunk> chunks);
     }
 }

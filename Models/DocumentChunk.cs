@@ -3,7 +3,7 @@ namespace PdfProcessingService.Models
     /// <summary>
     /// Represents a chunk of text content extracted from a PDF document.
     /// </summary>
-    public class PdfDocumentChunk
+    public class DocumentChunk
     {
         /// <summary>Unique identifier for this chunk.</summary>
         public string Id { get; set; } = string.Empty;

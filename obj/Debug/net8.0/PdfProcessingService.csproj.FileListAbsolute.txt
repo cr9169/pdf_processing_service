@@ -6,7 +6,6 @@ C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\PdfProcessingService.dep
 C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\PdfProcessingService.runtimeconfig.json
 C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\PdfProcessingService.dll
 C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\PdfProcessingService.pdb
-C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\Elasticsearch.Net.dll
 C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\itext.barcodes.dll
 C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\itext.bouncy-castle-connector.dll
 C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\itext.forms.dll
@@ -21,7 +20,6 @@ C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\itext.commons.dll
 C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\Microsoft.DotNet.PlatformAbstractions.dll
 C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\Microsoft.Extensions.DependencyModel.dll
 C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\Microsoft.OpenApi.dll
-C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\Nest.dll
 C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\Newtonsoft.Json.dll
 C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\UglyToad.PdfPig.Core.dll
 C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\UglyToad.PdfPig.DocumentLayoutAnalysis.dll
@@ -49,6 +47,7 @@ C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\PdfProcessingService.Ass
 C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\PdfProcessingService.csproj.CoreCompileInputs.cache
 C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\PdfProcessingService.MvcApplicationPartsAssemblyInfo.cs
 C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\PdfProcessingService.MvcApplicationPartsAssemblyInfo.cache
+C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\PdfProcessingService.sourcelink.json
 C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\scopedcss\bundle\PdfProcessingService.styles.css
 C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\staticwebassets.build.json
 C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\staticwebassets.development.json
@@ -65,3 +64,17 @@ C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\refint\PdfProcessingServ
 C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\PdfProcessingService.pdb
 C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\PdfProcessingService.genruntimeconfig.cache
 C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\ref\PdfProcessingService.dll
+C:\Users\BarGabay\PdfProcessingService\obj\Debug\net8.0\staticwebassets.upToDateCheck.txt
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\Aspose.PDF.dll
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\Microsoft.Win32.SystemEvents.dll
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\System.Configuration.ConfigurationManager.dll
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\System.Diagnostics.PerformanceCounter.dll
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\System.Drawing.Common.dll
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\System.Security.Cryptography.ProtectedData.dll
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\System.Security.Permissions.dll
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\System.Windows.Extensions.dll
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\runtimes\win\lib\net8.0\Microsoft.Win32.SystemEvents.dll
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\runtimes\win\lib\net8.0\System.Diagnostics.PerformanceCounter.dll
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\runtimes\win\lib\net8.0\System.Windows.Extensions.dll
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\Elastic.Clients.Elasticsearch.dll
+C:\Users\BarGabay\PdfProcessingService\bin\Debug\net8.0\Elastic.Transport.dll

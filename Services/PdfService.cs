@@ -23,7 +23,7 @@ namespace PdfProcessingService.Services
     /// 4. Tracks performance benchmarks throughout the process
     /// 5. Handles errors and timeout conditions
     /// </remarks>
-    public class PdfService : IPdfService
+    public class PdfService : IExtractService
     {
         private readonly IElasticsearchService _elasticsearchService;
         private readonly ILogger<PdfService> _logger;
@@ -54,7 +54,7 @@ namespace PdfProcessingService.Services
         /// </summary>
         /// <param name="filePath">The full path to the PDF file to process.</param>
         /// <returns>A <see cref="PdfProcessingResponse"/> containing processing results and metrics.</returns>
-        public async Task<PdfProcessingResponse> ProcessPdfFileAsync(string filePath)
+        public async Task<PdfProcessingResponse> ProcessFileAsync(string filePath)
         {
             var stopwatch = Stopwatch.StartNew();
             var response = new PdfProcessingResponse
@@ -64,6 +64,8 @@ namespace PdfProcessingService.Services
                 Success = false,
                 Benchmarks = new Dictionary<string, double>()
             };
+
+            Console.WriteLine($"The Id is: ${response.Id}");
 
             // Set up cancellation token with timeout based on configured maximum processing time
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(_settings.MaxProcessingTimeInMinutes));
@@ -81,6 +83,7 @@ namespace PdfProcessingService.Services
                     response.Benchmarks))
                 {
                     var validationResult = await FileValidationHelper.ValidatePdfFileAsync(filePath, _settings, _logger);
+                    Console.WriteLine(validationResult);
                     if (!validationResult.IsValid)
                     {
                         response.ErrorMessage = validationResult.ErrorMessage;
@@ -95,7 +98,7 @@ namespace PdfProcessingService.Services
                 response.FileSizeInBytes = fileInfo.Length;
 
                 // Step 2: Extract text from PDF and split into chunks
-                List<PdfDocumentChunk> chunks;
+                List<DocumentChunk> chunks;
                 int pageCount;
                 bool extractionSuccess;
                 string extractionError;
@@ -105,7 +108,7 @@ namespace PdfProcessingService.Services
                     (op, time) => _logger.LogInformation("Operation {Operation} completed in {Time:F2} seconds", op, time),
                     response.Benchmarks))
                 {
-                    var extractor = new PdfTextExtractor(_logger, _settings);
+                    var extractor = new MyPdfTextExtractor(_logger, _settings);
                     var extractionResult = await extractor.ExtractTextAsync(filePath, fileId, response.Benchmarks);
 
                     chunks = extractionResult.Chunks;

@@ -15,7 +15,7 @@ namespace PdfProcessingService.Controllers
     [Route("api/[controller]")]
     public class PdfController : ControllerBase
     {
-        private readonly IPdfService _pdfService;
+        private readonly IExtractService _pdfService;
         private readonly ILogger<PdfController> _logger;
 
         /// <summary>
@@ -24,7 +24,7 @@ namespace PdfProcessingService.Controllers
         /// <param name="pdfService">Service for processing PDF files.</param>
         /// <param name="logger">Logger for controller operations.</param>
         public PdfController(
-            IPdfService pdfService,
+            IExtractService pdfService,
             ILogger<PdfController> logger)
         {
             _pdfService = pdfService;
@@ -59,7 +59,7 @@ namespace PdfProcessingService.Controllers
                 _logger.LogInformation("Received request to process PDF file: {FilePath}", request.Path);
 
                 // Process the PDF file
-                var result = await _pdfService.ProcessPdfFileAsync(request.Path);
+                var result = await _pdfService.ProcessFileAsync(request.Path);
 
                 // Handle processing failures
                 if (!result.Success)
