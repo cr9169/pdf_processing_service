@@ -3,7 +3,7 @@ namespace PdfProcessingService.Models
     /// <summary>
     /// Configuration settings for PDF processing operations.
     /// </summary>
-    public class PdfProcessingSettings
+    public class ProcessingSettings
     {
         /// <summary>Maximum allowed size of PDF files (1GB default).</summary>
         public long MaxFileSizeInBytes { get; set; } = 1 * 1024 * 1024 * 1024; // 1GB default

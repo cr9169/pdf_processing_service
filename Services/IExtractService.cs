@@ -17,7 +17,7 @@ namespace PdfProcessingService.Services
         /// </summary>
         /// <param name="filePath">The full path to the PDF file to be processed.</param>
         /// <returns>
-        /// A <see cref="PdfProcessingResponse"/> containing the processing results,
+        /// A <see cref="ProcessingResponse"/> containing the processing results,
         /// including success status, metrics, and any error information.
         /// </returns>
         /// <remarks>
@@ -25,6 +25,6 @@ namespace PdfProcessingService.Services
         /// splitting into searchable chunks, and indexing in the search system.
         /// Performance metrics are collected throughout the process.
         /// </remarks>
-        Task<PdfProcessingResponse> ProcessFileAsync(string filePath);
+        Task<ProcessingResponse> ProcessFileAsync(string filePath);
     }
 }

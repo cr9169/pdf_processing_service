@@ -20,7 +20,7 @@ namespace PdfProcessingService.Helpers
         /// <returns>A tuple indicating if the file is valid and any error message.</returns>
         public static async Task<(bool IsValid, string ErrorMessage)> ValidatePdfFileAsync(
             string filePath,
-            PdfProcessingSettings settings,
+            ProcessingSettings settings,
             ILogger logger)
         {
             try

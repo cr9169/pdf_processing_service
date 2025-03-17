@@ -110,6 +110,8 @@ namespace PdfProcessingService.Services
                 _logger.LogDebug("Indexing chunk {SequenceNumber} of document {FileIdentifier}",
                     chunk.SequenceNumber, chunk.FileIdentifier);
 
+                _logger.LogInformation("Before indexing file....");
+
                 var response = await _client.IndexAsync(chunk, i => i
                     .Index(_settings.IndexName)
                     .Id(chunk.Id)

@@ -3,7 +3,7 @@ namespace PdfProcessingService.Models
     /// <summary>
     /// Response model containing results of PDF processing operations.
     /// </summary>
-    public class PdfProcessingResponse
+    public class ProcessingResponse
     {
         /// <summary>Unique identifier for the processing operation.</summary>
         public string Id { get; set; } = string.Empty;

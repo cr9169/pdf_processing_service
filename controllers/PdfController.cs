@@ -40,10 +40,10 @@ namespace PdfProcessingService.Controllers
         /// <response code="400">If the request is invalid or processing failed with validation errors.</response>
         /// <response code="500">If an unexpected error occurs during processing.</response>
         [HttpPost("process")]
-        [ProducesResponseType(typeof(PdfProcessingResponse), 200)]
+        [ProducesResponseType(typeof(ProcessingResponse), 200)]
         [ProducesResponseType(typeof(ValidationProblemDetails), 400)]
         [ProducesResponseType(typeof(ProblemDetails), 500)]
-        public async Task<IActionResult> ProcessPdfFile([FromBody] PdfProcessingRequest request)
+        public async Task<IActionResult> ProcessPdfFile([FromBody] ProcessingRequest request)
         {
             // Validate request
             if (string.IsNullOrWhiteSpace(request.Path))

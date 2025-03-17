@@ -27,7 +27,7 @@ namespace PdfProcessingService.Services
     {
         private readonly IElasticsearchService _elasticsearchService;
         private readonly ILogger<PdfService> _logger;
-        private readonly PdfProcessingSettings _settings;
+        private readonly ProcessingSettings _settings;
         private readonly ElasticsearchSettings _elasticsearchSettings;
 
         /// <summary>
@@ -39,7 +39,7 @@ namespace PdfProcessingService.Services
         /// <param name="logger">Logger for the PDF service.</param>
         public PdfService(
             IElasticsearchService elasticsearchService,
-            IOptions<PdfProcessingSettings> settings,
+            IOptions<ProcessingSettings> settings,
             IOptions<ElasticsearchSettings> elasticsearchSettings,
             ILogger<PdfService> logger)
         {
@@ -53,11 +53,11 @@ namespace PdfProcessingService.Services
         /// Processes a PDF file, extracting its content and indexing it in Elasticsearch.
         /// </summary>
         /// <param name="filePath">The full path to the PDF file to process.</param>
-        /// <returns>A <see cref="PdfProcessingResponse"/> containing processing results and metrics.</returns>
-        public async Task<PdfProcessingResponse> ProcessFileAsync(string filePath)
+        /// <returns>A <see cref="ProcessingResponse"/> containing processing results and metrics.</returns>
+        public async Task<ProcessingResponse> ProcessFileAsync(string filePath)
         {
             var stopwatch = Stopwatch.StartNew();
-            var response = new PdfProcessingResponse
+            var response = new ProcessingResponse
             {
                 Id = Guid.NewGuid().ToString(),
                 FilePath = filePath,

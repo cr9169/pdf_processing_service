@@ -85,12 +85,13 @@ public class Program
         // Configure settings from appsettings.json
         builder.Services.Configure<ElasticsearchSettings>(
             builder.Configuration.GetSection("ElasticsearchSettings"));
-        builder.Services.Configure<PdfProcessingSettings>(
-            builder.Configuration.GetSection("PdfProcessingSettings"));
+        builder.Services.Configure<ProcessingSettings>(
+            builder.Configuration.GetSection("ProcessingSettings"));
 
         // Register application services
         builder.Services.AddSingleton<IElasticsearchService, ElasticsearchService>();
         builder.Services.AddScoped<IExtractService, PdfService>();
+        builder.Services.AddScoped<TxtService>();
 
         // Configure CORS
         builder.Services.AddCors(options =>

@@ -16,7 +16,7 @@ namespace PdfProcessingService.Helpers
     public class MyPdfTextExtractor
     {
         private readonly ILogger _logger;
-        private readonly PdfProcessingSettings _settings;
+        private readonly ProcessingSettings _settings;
 
         /// <summary>
         /// Initializes a new instance of the PdfTextExtractor class.
@@ -25,7 +25,7 @@ namespace PdfProcessingService.Helpers
         /// <param name="settings">Settings that control processing behavior.</param>
         public MyPdfTextExtractor(
             ILogger logger,
-            PdfProcessingSettings settings)
+            ProcessingSettings settings)
         {
             _logger = logger;
             _settings = settings;
@@ -167,9 +167,5 @@ namespace PdfProcessingService.Helpers
                 }
             }
         }
-
     }
-
-
-
 }
