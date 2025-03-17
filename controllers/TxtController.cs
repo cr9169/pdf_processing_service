@@ -26,7 +26,7 @@ namespace PdfProcessingService.Controllers
         {
             _logger.LogInformation("Request to process TXT file: {FilePath}", request.Path);
 
-            var result = await _txtService.ProcessFileAsync(request.Path);
+            var result = await _txtService.ProcessFileAsyncVersion2(request.Path);
 
             if (!result.Success)
             {

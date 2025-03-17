@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.MemoryMappedFiles;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -21,7 +22,7 @@ namespace PdfProcessingService.Services
         private readonly ProcessingSettings _settings;
 
         // Default chunk size of 1MB if not configured
-        private const int DefaultChunkSizeInBytes = 1 * 1024 * 1024;
+        private const int DefaultChunkSizeInBytes = 9 * 1024 * 1024;
 
         /// <summary>
         /// Initializes a new instance of the TxtService class.
@@ -309,6 +310,234 @@ namespace PdfProcessingService.Services
 
             // If all else fails, just split at midpoint
             return midPoint;
+        }
+
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+        /// <summary>
+        /// During the processing process, the system first checks whether the file exists
+        /// and matches the required type. If the file is large, it is divided into chunks,
+        /// with each chunk represented as a DocumentChunk – a unit that groups all the relevant
+        /// information for a fixed-size section of the file. Memory is used using Memory Mapped,
+        /// which allows direct access to the file areas in memory without creating a separate
+        /// FileStream for each chunk, thus improving performance. Each DocumentChunk is processed
+        /// by a separate thread in parallel processing, which allows for simultaneous reading and
+        /// processing of different parts of the file. After processing each chunk, the system performs
+        /// a fine adjustment of the text boundaries to ensure that the cut is not made in the middle
+        /// of a sentence or word. Finally, the sorted DocumentChunks are grouped into small groups
+        /// (batches), with each batch being transferred for further processing – for example, to index
+        /// in a search system – also carried out in parallel while limiting the number of threads
+        /// active at the same time. This process, which combines partitioning for parallel processing,
+        /// using DocumentChunk, and working with batches, makes optimal use of memory and dramatically
+        /// improves the processing speed of large files.
+        /// </summary>
+        public async Task<ProcessingResponse> ProcessFileAsyncVersion2(string filePath)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var response = new ProcessingResponse
+            {
+                Id = Guid.NewGuid().ToString(),
+                FilePath = filePath,
+                Success = false,
+                Benchmarks = new Dictionary<string, double>()
+            };
+
+            try
+            {
+                _logger.LogInformation("Starting TXT processing for file: {FilePath}", filePath);
+
+                // Validate the file exists
+                if (!File.Exists(filePath))
+                {
+                    response.ErrorMessage = $"File does not exist: {filePath}";
+                    return response;
+                }
+
+                // Validate file extension
+                string extension = Path.GetExtension(filePath).ToLowerInvariant();
+                if (extension != ".txt")
+                {
+                    response.ErrorMessage = $"Invalid file extension: {extension}. Expected .txt";
+                    return response;
+                }
+
+                // Get file info
+                var fileInfo = new FileInfo(filePath);
+                response.FileSizeInBytes = fileInfo.Length;
+
+                // Generate a unique identifier for the file
+                var fileId = $"{Path.GetFileNameWithoutExtension(filePath).Replace(" ", "_")}_{fileInfo.Length}_{fileInfo.LastWriteTimeUtc.Ticks}";
+
+                // Get chunk size from settings or use default
+                int chunkSizeInBytes = _settings.ChunkSizeInBytes > 0
+                    ? _settings.ChunkSizeInBytes
+                    : DefaultChunkSizeInBytes;
+
+                // Process the file in chunks - using parallel approach
+                List<DocumentChunk> chunks = await ChunkTextFileParallelAsyncVersion2(filePath, fileId, chunkSizeInBytes);
+                response.ChunkCount = chunks.Count;
+
+                // Process chunks in parallel batches
+                var maxBatchSize = 10;
+                var batchCount = (int)Math.Ceiling(chunks.Count / (double)maxBatchSize);
+                var indexTasks = new List<Task<bool>>();
+
+                for (int i = 0; i < chunks.Count; i += maxBatchSize)
+                {
+                    var batch = chunks.Skip(i).Take(maxBatchSize).ToList();
+                    _logger.LogInformation("Indexing batch {CurrentBatch}/{TotalBatches} with {ChunkCount} chunks",
+                        (i / maxBatchSize) + 1, batchCount, batch.Count);
+
+                    indexTasks.Add(_elasticsearchService.BulkIndexChunksAsync(batch));
+
+                    // Limit concurrency to avoid overwhelming Elasticsearch
+                    if (indexTasks.Count >= _settings.MaxParallelism)
+                    {
+                        var completedTask = await Task.WhenAny(indexTasks);
+                        indexTasks.Remove(completedTask);
+                        if (!await completedTask)
+                        {
+                            response.ErrorMessage = "Failed to index batch";
+                            return response;
+                        }
+                    }
+                }
+
+                // Wait for any remaining tasks
+                var results = await Task.WhenAll(indexTasks);
+                if (results.Any(r => !r))
+                {
+                    response.ErrorMessage = "Failed to index one or more batches";
+                    return response;
+                }
+
+                response.Success = true;
+                response.PageCount = 1;
+
+                stopwatch.Stop();
+                response.ProcessingTimeInSeconds = stopwatch.Elapsed.TotalSeconds;
+
+                _logger.LogInformation("TXT processing completed successfully: {FilePath}, Chunks: {ChunkCount}",
+                    filePath, chunks.Count);
+
+                return response;
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                response.ProcessingTimeInSeconds = stopwatch.Elapsed.TotalSeconds;
+                response.ErrorMessage = $"Error processing TXT: {ex.Message}";
+
+                _logger.LogError(ex, "Error processing TXT file: {FilePath}", filePath);
+                return response;
+            }
+        }
+
+        /// <summary>
+        /// Chunks a text file in parallel for faster processing.
+        /// </summary>
+        private async Task<List<DocumentChunk>> ChunkTextFileParallelAsyncVersion2(string filePath, string fileId, int chunkSizeInBytes)
+        {
+            var fileInfo = new FileInfo(filePath);
+
+            // For small files, use the original method
+            if (fileInfo.Length <= chunkSizeInBytes)
+            {
+                return await ChunkTextFileAsync(filePath, fileId, chunkSizeInBytes);
+            }
+
+            _logger.LogInformation("Using parallel processing for large file: {FilePath}", filePath);
+
+            int chunkCount = (int)Math.Ceiling((double)fileInfo.Length / chunkSizeInBytes);
+            var chunkTasks = new List<Task<DocumentChunk>>();
+
+            // Create a memory-mapped file once for the entire file.
+            using (var mmf = MemoryMappedFile.CreateFromFile(filePath, FileMode.Open, null, 0L, MemoryMappedFileAccess.Read))
+            {
+                for (int i = 0; i < chunkCount; i++)
+                {
+                    int index = i; // Capture the loop variable
+                                   // Calculate the start position and view size for this chunk.
+                    long startPosition = (long)index * chunkSizeInBytes;
+                    long viewSize = Math.Min(chunkSizeInBytes, fileInfo.Length - startPosition);
+                    int sequenceNumber = index + 1;
+
+                    // Use Task.Run to process each chunk concurrently.
+                    chunkTasks.Add(Task.Run(() =>
+                    {
+                        // Create a view stream for this chunk.
+                        using (var viewStream = mmf.CreateViewStream(startPosition, viewSize, MemoryMappedFileAccess.Read))
+                        {
+                            using (var reader = new StreamReader(viewStream, Encoding.UTF8))
+                            {
+                                // Read the entire chunk synchronously (MemoryMappedViewStream reading is fast).
+                                string content = reader.ReadToEnd();
+
+                                // Adjust boundaries to find clean breaks if needed.
+                                if (index > 0)
+                                {
+                                    int breakPoint = FindFirstBreakPointVersion2(content);
+                                    content = content.Substring(breakPoint);
+                                }
+                                if (index < chunkCount - 1)
+                                {
+                                    int breakPoint = FindLastBreakPointVersion2(content);
+                                    content = content.Substring(0, breakPoint);
+                                }
+
+                                return new DocumentChunk
+                                {
+                                    Id = Guid.NewGuid().ToString(),
+                                    OriginalFilePath = filePath,
+                                    FileName = Path.GetFileName(filePath),
+                                    FileIdentifier = fileId,
+                                    SequenceNumber = sequenceNumber,
+                                    StartPage = 1,
+                                    EndPage = 1,
+                                    TotalPages = 1,
+                                    Content = content,
+                                    ProcessedAt = DateTime.UtcNow,
+                                    FileSizeInBytes = fileInfo.Length,
+                                    TotalChunks = chunkCount
+                                };
+                            }
+                        }
+                    }));
+                }
+
+                var results = await Task.WhenAll(chunkTasks);
+                return results.OrderBy(c => c.SequenceNumber).ToList();
+            }
+        }
+
+
+
+        // Helper methods to find clean break points
+        private int FindFirstBreakPointVersion2(string text)
+        {
+            // Simple implementation - find first line break or space
+            for (int i = 0; i < Math.Min(text.Length, 500); i++)
+            {
+                if (text[i] == '\n' || text[i] == ' ')
+                    return i + 1;
+            }
+
+            return 0; // No good break point found
+        }
+
+        private int FindLastBreakPointVersion2(string text)
+        {
+            // Simple implementation - find last line break or sentence end
+            for (int i = text.Length - 1; i > Math.Max(0, text.Length - 500); i--)
+            {
+                if (text[i] == '\n' ||
+                    ((text[i] == '.' || text[i] == '!' || text[i] == '?') && (i + 1 >= text.Length || char.IsWhiteSpace(text[i + 1]))))
+                    return i + 1;
+            }
+
+            return text.Length; // No good break point found
         }
     }
 }

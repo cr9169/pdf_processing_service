@@ -21,6 +21,6 @@ namespace PdfProcessingService.Models
         public int MaxParallelism { get; set; } = 4;
 
         /// <summary>Size of each content chunk for splitting (5MB default).</summary>
-        public int ChunkSizeInBytes { get; set; } = 5 * 1024 * 1024; // 5MB default, same as in ElasticsearchSettings
+        public int ChunkSizeInBytes { get; set; } = 9 * 1024 * 1024; // 5MB default, same as in ElasticsearchSettings
     }
 }
