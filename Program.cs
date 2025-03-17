@@ -64,7 +64,6 @@ public class Program
             .MinimumLevel.Override("System", LogEventLevel.Warning)
             .Enrich.FromLogContext()
             .WriteTo.Console()
-            .WriteTo.File("logs/pdf-processing-.log", rollingInterval: RollingInterval.Day)
             .CreateLogger();
 
         builder.Host.UseSerilog();
