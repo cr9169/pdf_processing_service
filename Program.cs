@@ -37,8 +37,8 @@ public class Program
             Log.Information("Starting PDF Processing Service");
 
             // Ensure Elasticsearch index exists on startup
-            var elasticsearchService = app.Services.GetRequiredService<IElasticsearchService>();
-            elasticsearchService.EnsureIndexExistsAsync().GetAwaiter().GetResult();
+            //var elasticsearchService = app.Services.GetRequiredService<IElasticsearchService>();
+            //elasticsearchService.EnsureIndexExistsAsync().GetAwaiter().GetResult();
 
             app.Run();
         }
@@ -86,6 +86,7 @@ public class Program
             builder.Configuration.GetSection("ElasticsearchSettings"));
         builder.Services.Configure<ProcessingSettings>(
             builder.Configuration.GetSection("ProcessingSettings"));
+        builder.Services.AddScoped<FileDownloaderService>();
 
         // Register application services
         builder.Services.AddSingleton<IElasticsearchService, ElasticsearchService>();

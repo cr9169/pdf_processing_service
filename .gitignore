@@ -12,3 +12,6 @@ obj/
 
 # Ignore NuGet packages folder (if present)
 packages/
+
+token.json/
+credentials.json
