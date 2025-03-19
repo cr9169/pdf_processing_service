@@ -335,13 +335,13 @@ namespace PdfProcessingService.Services
         /// </summary>
         public async Task<ProcessingResponse> ProcessFileAsyncVersion2(string filePath)
         {
-            var stopwatch = Stopwatch.StartNew();
+            var overallStopwatch = Stopwatch.StartNew();
             var response = new ProcessingResponse
             {
                 Id = Guid.NewGuid().ToString(),
                 FilePath = filePath,
                 Success = false,
-                Benchmarks = new Dictionary<string, double>()
+                Benchmarks = []
             };
 
             try
@@ -371,16 +371,24 @@ namespace PdfProcessingService.Services
                 var fileId = $"{Path.GetFileNameWithoutExtension(filePath).Replace(" ", "_")}_{fileInfo.Length}_{fileInfo.LastWriteTimeUtc.Ticks}";
 
                 // Get chunk size from settings or use default
-                int chunkSizeInBytes = _settings.ChunkSizeInBytes > 0
-                    ? _settings.ChunkSizeInBytes
-                    : DefaultChunkSizeInBytes;
+                int chunkSizeInBytes = _settings.ChunkSizeInBytes > 0 ? _settings.ChunkSizeInBytes : DefaultChunkSizeInBytes;
 
-                // Process the file in chunks - using parallel approach
+                // -------------------------------
+                // STEP 1: Read and chunk the file
+                // -------------------------------
+                var readStopwatch = Stopwatch.StartNew();
                 List<DocumentChunk> chunks = await ChunkTextFileParallelAsyncVersion2(filePath, fileId, chunkSizeInBytes);
+                readStopwatch.Stop();
+                _logger.LogInformation("Finished reading file. Time taken: {ReadTime} seconds", readStopwatch.Elapsed.TotalSeconds);
+
                 response.ChunkCount = chunks.Count;
 
-                // Process chunks in parallel batches
-                var maxBatchSize = 10;
+                // -------------------------------
+                // STEP 2: Bulk index the chunks into Elasticsearch
+                // -------------------------------
+                var indexStopwatch = Stopwatch.StartNew();
+
+                var maxBatchSize = 10; // Batch size for indexing
                 var batchCount = (int)Math.Ceiling(chunks.Count / (double)maxBatchSize);
                 var indexTasks = new List<Task<bool>>();
 
@@ -392,7 +400,7 @@ namespace PdfProcessingService.Services
 
                     indexTasks.Add(_elasticsearchService.BulkIndexChunksAsync(batch));
 
-                    // Limit concurrency to avoid overwhelming Elasticsearch
+                    // Limit parallel indexing to _settings.MaxParallelism tasks concurrently.
                     if (indexTasks.Count >= _settings.MaxParallelism)
                     {
                         var completedTask = await Task.WhenAny(indexTasks);
@@ -405,35 +413,37 @@ namespace PdfProcessingService.Services
                     }
                 }
 
-                // Wait for any remaining tasks
+                // Wait for any remaining indexing tasks to complete.
                 var results = await Task.WhenAll(indexTasks);
                 if (results.Any(r => !r))
                 {
                     response.ErrorMessage = "Failed to index one or more batches";
                     return response;
                 }
+                indexStopwatch.Stop();
+                _logger.LogInformation("Finished indexing to Elasticsearch. Time taken: {IndexTime} seconds", indexStopwatch.Elapsed.TotalSeconds);
 
+                // -------------------------------
+                // Finalize response
+                // -------------------------------
                 response.Success = true;
-                response.PageCount = 1;
+                response.PageCount = 1; // TXT files don't have pages
 
-                stopwatch.Stop();
-                response.ProcessingTimeInSeconds = stopwatch.Elapsed.TotalSeconds;
-
-                _logger.LogInformation("TXT processing completed successfully: {FilePath}, Chunks: {ChunkCount}",
-                    filePath, chunks.Count);
-
+                overallStopwatch.Stop();
+                response.ProcessingTimeInSeconds = overallStopwatch.Elapsed.TotalSeconds;
+                _logger.LogInformation("TXT processing completed successfully: {FilePath}, Chunks: {ChunkCount}", filePath, chunks.Count);
                 return response;
             }
             catch (Exception ex)
             {
-                stopwatch.Stop();
-                response.ProcessingTimeInSeconds = stopwatch.Elapsed.TotalSeconds;
+                overallStopwatch.Stop();
+                response.ProcessingTimeInSeconds = overallStopwatch.Elapsed.TotalSeconds;
                 response.ErrorMessage = $"Error processing TXT: {ex.Message}";
-
                 _logger.LogError(ex, "Error processing TXT file: {FilePath}", filePath);
                 return response;
             }
         }
+
 
         /// <summary>
         /// Chunks a text file in parallel for faster processing.
@@ -467,6 +477,9 @@ namespace PdfProcessingService.Services
                     // Use Task.Run to process each chunk concurrently.
                     chunkTasks.Add(Task.Run(() =>
                     {
+
+                        _logger.LogInformation("Processing chunk {ChunkIndex} on thread {ThreadId}", index, Thread.CurrentThread.ManagedThreadId);
+
                         // Create a view stream for this chunk.
                         using (var viewStream = mmf.CreateViewStream(startPosition, viewSize, MemoryMappedFileAccess.Read))
                         {
