@@ -36,9 +36,9 @@ public class Program
         {
             Log.Information("Starting PDF Processing Service");
 
-            // Ensure Elasticsearch index exists on startup
-            //var elasticsearchService = app.Services.GetRequiredService<IElasticsearchService>();
-            //elasticsearchService.EnsureIndexExistsAsync().GetAwaiter().GetResult();
+            //Ensure Elasticsearch index exists on startup
+            var elasticsearchService = app.Services.GetRequiredService<IElasticsearchService>();
+            elasticsearchService.EnsureIndexExistsAsync().GetAwaiter().GetResult();
 
             app.Run();
         }

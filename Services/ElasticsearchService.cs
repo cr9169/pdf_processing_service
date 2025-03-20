@@ -112,10 +112,10 @@ namespace PdfProcessingService.Services
 
                 _logger.LogInformation("Before indexing file....");
 
+                // Removing Refresh from individual index operation.
                 var response = await _client.IndexAsync(chunk, i => i
                     .Index(_settings.IndexName)
                     .Id(chunk.Id)
-                    .Refresh(Refresh.True)
                 );
 
                 if (!response.IsValidResponse)
@@ -165,10 +165,9 @@ namespace PdfProcessingService.Services
                     }
                 ).Cast<IBulkOperation>().ToList();
 
-                // Create and execute the bulk request.
+                // Create and execute the bulk request without Refresh.
                 var bulkRequest = new BulkRequest
                 {
-                    Refresh = Refresh.True, // immediately refresh for search
                     Operations = bulkOperations
                 };
 
@@ -192,6 +191,10 @@ namespace PdfProcessingService.Services
 
                 _logger.LogInformation("Successfully bulk indexed {ChunkCount} chunks for document {FileIdentifier}",
                     chunkCount, fileId);
+
+                // Perform a single refresh after bulk indexing
+                await _client.Indices.RefreshAsync(_settings.IndexName);
+
                 return true;
             }
             catch (Exception ex)

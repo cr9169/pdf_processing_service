@@ -16,7 +16,7 @@ namespace PdfProcessingService.Models
 
         /// <summary>Whether to use parallel processing (true by default).</summary>
         public bool ProcessInParallel { get; set; } = true;
-
+        
         /// <summary>Maximum number of concurrent operations (4 default).</summary>
         public int MaxParallelism { get; set; } = 4;
 
