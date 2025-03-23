@@ -23,5 +23,7 @@ namespace PdfProcessingService.Models
         /// <summary>Size of each content chunk for splitting (5MB default).</summary>
         public int ChunkSizeInBytes { get; set; } = 9 * 1024 * 1024; // 5MB default, same as in ElasticsearchSettings
         public string Url { get; set; }
+        public string ElasticUsername { get; set; }
+        public string ElasticPassword { get; set; }
     }
 }

@@ -657,7 +657,7 @@ namespace PdfProcessingService.Services
                 }
 
                 indexStopwatch.Stop();
-                _logger.LogInformation("Finished sending data to plugin /_custom_index. Time taken: {IndexTime} seconds", indexStopwatch.Elapsed.TotalSeconds);
+                _logger.LogInformation("Finished sending data to plugin /_target_index. Time taken: {IndexTime} seconds", indexStopwatch.Elapsed.TotalSeconds);
 
                 // -------------------------------
                 // סיום
@@ -682,7 +682,7 @@ namespace PdfProcessingService.Services
         }
 
         /// <summary>
-        /// Sends a single chunk as JSON to the /_custom_index endpoint in the following format:
+        /// Sends a single chunk as JSON to the /_target_index endpoint in the following format:
         ///  { /// "content": "chunk content" /// }
         /// </summary>
         private async Task<bool> SendChunkToCustomPluginAsync(DocumentChunk chunk)
@@ -693,7 +693,20 @@ namespace PdfProcessingService.Services
                 var bodyObject = new { content = chunk.Content };
                 var json = JsonSerializer.Serialize(bodyObject);
 
-                using var httpClient = new HttpClient();
+                // יצירת HttpClient עם תמיכה ב-SSL עצמי, אם נדרש
+                var handler = new HttpClientHandler();
+                handler.ServerCertificateCustomValidationCallback =
+                    (sender, cert, chain, sslPolicyErrors) => true; // לפיתוח בלבד
+                using var httpClient = new HttpClient(handler);
+
+                // הוספת אימות בסיסי - זה הקוד החשוב שחסר!
+                string username = _settings.ElasticUsername; // למשל "elastic"
+                string password = _settings.ElasticPassword; // למשל "zC5dMo59tKqHlFvBkWy4"
+
+                var authString = $"{username}:{password}";
+                var base64Auth = Convert.ToBase64String(Encoding.UTF8.GetBytes(authString));
+                httpClient.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", base64Auth);
 
                 var pluginUrl = $"{_settings.Url}/_custom_index";
 
@@ -703,8 +716,9 @@ namespace PdfProcessingService.Services
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError("Failed to POST chunk {SequenceNumber} to {PluginUrl}. Status: {StatusCode}",
-                        chunk.SequenceNumber, pluginUrl, response.StatusCode);
+                    string responseBody = await response.Content.ReadAsStringAsync();
+                    _logger.LogError("Failed to POST chunk {SequenceNumber} to {PluginUrl}. Status: {StatusCode}, Response: {Response}",
+                        chunk.SequenceNumber, pluginUrl, response.StatusCode, responseBody);
                     return false;
                 }
 
