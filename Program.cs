@@ -85,7 +85,7 @@ public class Program
         builder.Services.Configure<ElasticsearchSettings>(
             builder.Configuration.GetSection("ElasticsearchSettings"));
         builder.Services.Configure<ProcessingSettings>(
-            builder.Configuration.GetSection("ProcessingSettings"));
+            builder.Configuration.GetSection("PdfProcessingSettings"));
         builder.Services.AddScoped<FileDownloaderService>();
 
         // Register application services

@@ -704,6 +704,9 @@ namespace PdfProcessingService.Services
                 string password = _settings.ElasticPassword; // למשל "zC5dMo59tKqHlFvBkWy4"
 
                 var authString = $"{username}:{password}";
+
+                _logger.LogInformation($"auth string is {authString}");
+
                 var base64Auth = Convert.ToBase64String(Encoding.UTF8.GetBytes(authString));
                 httpClient.DefaultRequestHeaders.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", base64Auth);
