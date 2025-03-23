@@ -41,6 +41,29 @@ namespace PdfProcessingService.Controllers
             return Ok(result);
         }
 
+        /// <summary>
+        /// Processes a TXT file and sends its processed content to a custom Elasticsearch plugin endpoint.
+        /// The plugin expects a JSON payload with a "content" field containing the processed text.
+        /// </summary>
+        /// <param name="request">Request containing the path to the TXT file.</param>
+        /// <returns>Processing result with status and performance metrics.</returns>
+        [HttpPost("process/v3")]
+        public async Task<IActionResult> ProcessTxtV3([FromBody] ProcessingRequest request)
+        {
+            _logger.LogInformation("Request to process TXT file via custom plugin (v3): {FilePath}", request.Path);
+
+            var result = await _txtService.ProcessFileAsyncVersion3(request.Path);
+
+            if (!result.Success)
+            {
+                _logger.LogWarning("Failed to process TXT file via custom plugin: {FilePath}. Error: {Error}",
+                    request.Path, result.ErrorMessage);
+                return BadRequest(result);
+            }
+
+            return Ok(result);
+        }
+
         [HttpPost("download")]
         public async Task<IActionResult> DownloadFile([FromBody] DownloadRequest request)
         {

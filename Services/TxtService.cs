@@ -9,6 +9,7 @@ using System.IO.MemoryMappedFiles;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Text.Json;
 
 namespace PdfProcessingService.Services
 {
@@ -551,6 +552,170 @@ namespace PdfProcessingService.Services
             }
 
             return text.Length; // No good break point found
+        }
+
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+        public async Task<ProcessingResponse> ProcessFileAsyncVersion3(string filePath)
+        {
+            var overallStopwatch = Stopwatch.StartNew();
+            var response = new ProcessingResponse
+            {
+                Id = Guid.NewGuid().ToString(),
+                FilePath = filePath,
+                Success = false,
+                Benchmarks = new Dictionary<string, double>()
+            };
+
+            try
+            {
+                _logger.LogInformation("Starting TXT processing (v3) for file: {FilePath}", filePath);
+
+                // בדיקת קיום הקובץ
+                if (!File.Exists(filePath))
+                {
+                    response.ErrorMessage = $"File does not exist: {filePath}";
+                    return response;
+                }
+
+                // בדיקת סיומת
+                string extension = Path.GetExtension(filePath).ToLowerInvariant();
+                if (extension != ".txt")
+                {
+                    response.ErrorMessage = $"Invalid file extension: {extension}. Expected .txt";
+                    return response;
+                }
+
+                // מידע על הקובץ
+                var fileInfo = new FileInfo(filePath);
+                response.FileSizeInBytes = fileInfo.Length;
+
+                // זיהוי ייחודי
+                var fileId = $"{Path.GetFileNameWithoutExtension(filePath).Replace(" ", "_")}_{fileInfo.Length}_{fileInfo.LastWriteTimeUtc.Ticks}";
+
+                // גודל צ'אנק מתוך ההגדרות או ברירת מחדל
+                int chunkSizeInBytes = _settings.ChunkSizeInBytes > 0 ? _settings.ChunkSizeInBytes : DefaultChunkSizeInBytes;
+
+                // -------------------------------
+                // STEP 1: פיצול הקובץ לצ'אנקים
+                // -------------------------------
+                var readStopwatch = Stopwatch.StartNew();
+                List<DocumentChunk> chunks = await ChunkTextFileParallelAsyncVersion2(filePath, fileId, chunkSizeInBytes);
+                readStopwatch.Stop();
+                _logger.LogInformation("Finished reading file. Time taken: {ReadTime} seconds", readStopwatch.Elapsed.TotalSeconds);
+
+                response.ChunkCount = chunks.Count;
+
+                // -------------------------------
+                // STEP 2: שליחת הצ'אנקים ל-plugin
+                // -------------------------------
+                var indexStopwatch = Stopwatch.StartNew();
+
+                // נגדיר גודל batch קטן כדי לא להעמיס על המערכת
+                var maxBatchSize = 10;
+                var batchCount = (int)Math.Ceiling(chunks.Count / (double)maxBatchSize);
+
+                // נשתמש ברשימת משימות כדי לבצע במקביל (עד גבול מסוים)
+                var indexTasks = new List<Task<bool>>();
+
+                for (int i = 0; i < chunks.Count; i += maxBatchSize)
+                {
+                    var batch = chunks.Skip(i).Take(maxBatchSize).ToList();
+                    _logger.LogInformation("Indexing batch {CurrentBatch}/{TotalBatches} with {ChunkCount} chunks (v3)",
+                        (i / maxBatchSize) + 1, batchCount, batch.Count);
+
+                    // כל batch שולח מספר צ'אנקים במקביל
+                    var tasksForThisBatch = batch.Select(chunk => SendChunkToCustomPluginAsync(chunk)).ToList();
+                    indexTasks.AddRange(tasksForThisBatch);
+
+                    // הגבלת כמות מקסימלית של משימות שרצות במקביל
+                    // אם לא הגדרת MaxParallelism ב-ProcessingSettings, אפשר לשים ערך ידני, למשל 4
+                    var maxParallel = _settings.MaxParallelism > 0 ? _settings.MaxParallelism : 4;
+
+                    // כל עוד יש יותר מדי משימות תלויות ועומס על המערכת, נחכה שמשהו יסיים
+                    while (indexTasks.Count >= maxParallel)
+                    {
+                        var completedTask = await Task.WhenAny(indexTasks);
+                        indexTasks.Remove(completedTask);
+
+                        if (!await completedTask)
+                        {
+                            response.ErrorMessage = "Failed to index one of the chunks in the plugin.";
+                            return response;
+                        }
+                    }
+                }
+
+                // חכים לכל המשימות שנשארו
+                var results = await Task.WhenAll(indexTasks);
+                if (results.Any(r => !r))
+                {
+                    response.ErrorMessage = "Failed to index one or more chunks via the plugin.";
+                    return response;
+                }
+
+                indexStopwatch.Stop();
+                _logger.LogInformation("Finished sending data to plugin /_custom_index. Time taken: {IndexTime} seconds", indexStopwatch.Elapsed.TotalSeconds);
+
+                // -------------------------------
+                // סיום
+                // -------------------------------
+                response.Success = true;
+                response.PageCount = 1; // TXT ללא עמודים
+
+                overallStopwatch.Stop();
+                response.ProcessingTimeInSeconds = overallStopwatch.Elapsed.TotalSeconds;
+                _logger.LogInformation("TXT processing (v3) completed successfully: {FilePath}, Chunks: {ChunkCount}", filePath, chunks.Count);
+
+                return response;
+            }
+            catch (Exception ex)
+            {
+                overallStopwatch.Stop();
+                response.ProcessingTimeInSeconds = overallStopwatch.Elapsed.TotalSeconds;
+                response.ErrorMessage = $"Error processing TXT (v3): {ex.Message}";
+                _logger.LogError(ex, "Error processing TXT file (v3): {FilePath}", filePath);
+                return response;
+            }
+        }
+
+        /// <summary>
+        /// Sends a single chunk as JSON to the /_custom_index endpoint in the following format:
+        ///  { /// "content": "chunk content" /// }
+        /// </summary>
+        private async Task<bool> SendChunkToCustomPluginAsync(DocumentChunk chunk)
+        {
+            try
+            {
+                // הכנת ה-JSON
+                var bodyObject = new { content = chunk.Content };
+                var json = JsonSerializer.Serialize(bodyObject);
+
+                using var httpClient = new HttpClient();
+
+                var pluginUrl = $"{_settings.Url}/_custom_index";
+
+                // הכנת הבקשה
+                using var requestContent = new StringContent(json, Encoding.UTF8, "application/json");
+                var response = await httpClient.PostAsync(pluginUrl, requestContent);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError("Failed to POST chunk {SequenceNumber} to {PluginUrl}. Status: {StatusCode}",
+                        chunk.SequenceNumber, pluginUrl, response.StatusCode);
+                    return false;
+                }
+
+                _logger.LogDebug("Successfully sent chunk {SequenceNumber} to plugin", chunk.SequenceNumber);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending chunk {SequenceNumber} to plugin", chunk.SequenceNumber);
+                return false;
+            }
         }
     }
 }
