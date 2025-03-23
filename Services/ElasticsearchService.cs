@@ -28,10 +28,11 @@ namespace PdfProcessingService.Services
             _settings = settings.Value;
             _logger = logger;
 
-            // Configure the Elasticsearch client using the new Elastic.Clients.Elasticsearch package.
             var clientSettings = new ElasticsearchClientSettings(new Uri(_settings.Url))
                 .DefaultIndex(_settings.IndexName)
-                .EnableDebugMode(); // Debug mode will include request/response details in the client logs
+                .Authentication(new BasicAuthentication("elastic", "zC5dMo59tKqHlFvBkWy4"))
+                .ServerCertificateValidationCallback((sender, cert, chain, errors) => true) 
+                .EnableDebugMode();
 
             _client = new ElasticsearchClient(clientSettings);
         }

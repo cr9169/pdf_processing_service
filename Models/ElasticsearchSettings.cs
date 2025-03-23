@@ -5,11 +5,11 @@ namespace PdfProcessingService.Models
     /// </summary>
     public class ElasticsearchSettings
     {
-        /// <summary>Elasticsearch server URL (default: http://localhost:9200).</summary>
-        public string Url { get; set; } = "http://localhost:9200";
+        /// <summary>Elasticsearch server URL (default: https://localhost:9200).</summary>
+        public string Url { get; set; } = "https://localhost:9200";
 
         /// <summary>Name of the Elasticsearch index for storing PDF documents (default: pdf_documents).</summary>
-        public string IndexName { get; set; } = $"pdf_documents_{DateTime.Now.ToString("HH:mm")}";
+        public string IndexName { get; set; } = $"target_index_{DateTime.Now.ToString("HH:mm")}";
 
         /// <summary>Maximum number of documents in a bulk indexing operation (default: 1000).</summary>
         public int BulkBatchSize { get; set; } = 1000;
