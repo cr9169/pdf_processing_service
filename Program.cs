@@ -129,7 +129,6 @@ public class Program
         }
 
         app.UseMiddleware<ExceptionHandlingMiddleware>();
-        app.UseHttpsRedirection();
         app.UseCors("AllowAll");
         app.UseAuthorization();
     }

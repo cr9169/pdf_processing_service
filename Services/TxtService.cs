@@ -604,6 +604,7 @@ namespace PdfProcessingService.Services
                 var readStopwatch = Stopwatch.StartNew();
                 List<DocumentChunk> chunks = await ChunkTextFileParallelAsyncVersion2(filePath, fileId, chunkSizeInBytes);
                 readStopwatch.Stop();
+                response.Benchmarks["FileReadTime"] = readStopwatch.Elapsed.TotalSeconds;
                 _logger.LogInformation("Finished reading file. Time taken: {ReadTime} seconds", readStopwatch.Elapsed.TotalSeconds);
 
                 response.ChunkCount = chunks.Count;
@@ -656,7 +657,57 @@ namespace PdfProcessingService.Services
                     return response;
                 }
 
+                // Verify all chunks were successfully indexed in Elasticsearch
+                try
+                {
+                    string url = _settings.Url;
+                    if (!url.StartsWith("http://"))
+                    {
+                        url = "http://" + url;
+                    }
+
+                    using var httpClient = new HttpClient();
+
+                    // Force a refresh to make indexed documents visible for search
+                    _logger.LogInformation("Requesting Elasticsearch refresh to ensure all documents are searchable");
+                    var refreshUrl = $"{url}/target_index/_refresh";
+                    await httpClient.PostAsync(refreshUrl, null);
+
+                    // Request count of documents in the index
+                    var countUrl = $"{url}/target_index/_count";
+                    var countResponse = await httpClient.GetAsync(countUrl);
+
+                    if (countResponse.IsSuccessStatusCode)
+                    {
+                        string countContent = await countResponse.Content.ReadAsStringAsync();
+                        using JsonDocument jsonDoc = JsonDocument.Parse(countContent);
+
+                        if (jsonDoc.RootElement.TryGetProperty("count", out JsonElement countElement))
+                        {
+                            int documentCount = countElement.GetInt32();
+
+                            if (documentCount == chunks.Count)
+                            {
+                                _logger.LogInformation("ELASTICSEARCH INDEXING COMPLETE: All {ChunkCount} chunks were successfully indexed and verified", chunks.Count);
+                                response.Benchmarks["IndexedDocumentCount"] = documentCount;
+                            }
+                            else
+                            {
+                                _logger.LogWarning("ELASTICSEARCH INDEXING INCOMPLETE: Expected {ChunkCount} chunks but found {DocumentCount} documents",
+                                    chunks.Count, documentCount);
+                                response.Benchmarks["ExpectedCount"] = chunks.Count;
+                                response.Benchmarks["ActualCount"] = documentCount;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Unable to verify final document count in Elasticsearch: {ErrorMessage}", ex.Message);
+                }
+
                 indexStopwatch.Stop();
+                response.Benchmarks["IndexingTime"] = indexStopwatch.Elapsed.TotalSeconds;
                 _logger.LogInformation("Finished sending data to plugin /_target_index. Time taken: {IndexTime} seconds", indexStopwatch.Elapsed.TotalSeconds);
 
                 // -------------------------------
@@ -682,55 +733,96 @@ namespace PdfProcessingService.Services
         }
 
         /// <summary>
-        /// Sends a single chunk as JSON to the /_target_index endpoint in the following format:
-        ///  { /// "content": "chunk content" /// }
+        /// Sends a single chunk as JSON to the /_custom_index endpoint.
         /// </summary>
         private async Task<bool> SendChunkToCustomPluginAsync(DocumentChunk chunk)
         {
             try
             {
-                // הכנת ה-JSON
-                var bodyObject = new { content = chunk.Content };
+                // Prepare JSON payload with relevant chunk data
+                var bodyObject = new
+                {
+                    content = chunk.Content,
+                    fileIdentifier = chunk.FileIdentifier,
+                    fileName = chunk.FileName,
+                    sequenceNumber = chunk.SequenceNumber,
+                    totalChunks = chunk.TotalChunks
+                };
                 var json = JsonSerializer.Serialize(bodyObject);
 
-                // יצירת HttpClient עם תמיכה ב-SSL עצמי, אם נדרש
-                var handler = new HttpClientHandler();
-                handler.ServerCertificateCustomValidationCallback =
-                    (sender, cert, chain, sslPolicyErrors) => true; // לפיתוח בלבד
-                using var httpClient = new HttpClient(handler);
+                // Create simple HTTP client
+                using var httpClient = new HttpClient();
 
-                // הוספת אימות בסיסי - זה הקוד החשוב שחסר!
-                string username = _settings.ElasticUsername; // למשל "elastic"
-                string password = _settings.ElasticPassword; // למשל "zC5dMo59tKqHlFvBkWy4"
+                // Format URL correctly
+                string url = _settings.Url;
+                if (!url.StartsWith("http://"))
+                {
+                    url = "http://" + url;
+                }
+                var pluginUrl = $"{url}/_custom_index";
 
-                var authString = $"{username}:{password}";
+                // Log before sending request
+                _logger.LogDebug("Sending chunk {SequenceNumber}/{TotalChunks} to Elasticsearch plugin",
+                    chunk.SequenceNumber, chunk.TotalChunks);
 
-                _logger.LogInformation($"auth string is {authString}");
-
-                var base64Auth = Convert.ToBase64String(Encoding.UTF8.GetBytes(authString));
-                httpClient.DefaultRequestHeaders.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", base64Auth);
-
-                var pluginUrl = $"{_settings.Url}/_custom_index";
-
-                // הכנת הבקשה
+                // Send the request
                 using var requestContent = new StringContent(json, Encoding.UTF8, "application/json");
+                var stopwatch = Stopwatch.StartNew();
                 var response = await httpClient.PostAsync(pluginUrl, requestContent);
+                stopwatch.Stop();
 
                 if (!response.IsSuccessStatusCode)
                 {
                     string responseBody = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Failed to POST chunk {SequenceNumber} to {PluginUrl}. Status: {StatusCode}, Response: {Response}",
-                        chunk.SequenceNumber, pluginUrl, response.StatusCode, responseBody);
+                    _logger.LogError("Failed to POST chunk {SequenceNumber}/{TotalChunks} to {PluginUrl}. Status: {StatusCode}, Response: {Response}",
+                        chunk.SequenceNumber, chunk.TotalChunks, pluginUrl, response.StatusCode, responseBody);
                     return false;
                 }
 
-                _logger.LogDebug("Successfully sent chunk {SequenceNumber} to plugin", chunk.SequenceNumber);
-                return true;
+                // Parse response to extract indexing details
+                string responseContent = await response.Content.ReadAsStringAsync();
+                using JsonDocument jsonDoc = JsonDocument.Parse(responseContent);
+
+                // Check if indexing was successful directly from our custom field
+                if (jsonDoc.RootElement.TryGetProperty("indexing_success", out JsonElement successElement) &&
+                    successElement.GetBoolean())
+                {
+                    // Extract document number if provided by plugin
+                    string docNumberInfo = "";
+                    if (jsonDoc.RootElement.TryGetProperty("document_number", out JsonElement docNumElement) &&
+                        jsonDoc.RootElement.TryGetProperty("total_processed", out JsonElement totalElement))
+                    {
+                        docNumberInfo = $"(Document #{docNumElement.GetInt32()} of {totalElement.GetInt32()} indexed)";
+                    }
+
+                    // Extract processing time if provided by plugin
+                    string processingTimeInfo = "";
+                    if (jsonDoc.RootElement.TryGetProperty("processing_time_ms", out JsonElement timeElement))
+                    {
+                        processingTimeInfo = $"in {timeElement.GetInt64()}ms";
+                    }
+                    else
+                    {
+                        processingTimeInfo = $"in {stopwatch.ElapsedMilliseconds}ms";
+                    }
+
+                    // Log success with detailed information
+                    _logger.LogInformation("Chunk {SequenceNumber}/{TotalChunks} indexed successfully {ProcessingTime} {DocInfo}",
+                        chunk.SequenceNumber, chunk.TotalChunks, processingTimeInfo, docNumberInfo);
+
+                    return true;
+                }
+                else
+                {
+                    _logger.LogWarning("Chunk {SequenceNumber}/{TotalChunks} may not be indexed properly. Response: {Response}",
+                        chunk.SequenceNumber, chunk.TotalChunks, responseContent);
+                    return false;
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error sending chunk {SequenceNumber} to plugin", chunk.SequenceNumber);
+                _logger.LogError(ex, "Error sending chunk {SequenceNumber}/{TotalChunks} to plugin",
+                    chunk.SequenceNumber, chunk.TotalChunks);
                 return false;
             }
         }
