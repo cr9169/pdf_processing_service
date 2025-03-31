@@ -700,6 +700,26 @@ namespace PdfProcessingService.Services
                             }
                         }
                     }
+
+                    // health check for data avaliability check
+                    try
+                    {
+                        string healthUrl = $"{url}/_cluster/health/target_index?wait_for_status=green&timeout=30s";
+                        var healthResponse = await httpClient.GetAsync(healthUrl);
+                        if (healthResponse.IsSuccessStatusCode)
+                        {
+                            _logger.LogInformation("Cluster health is green. Index is ready.");
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Cluster health check returned non-green status.");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning("Error checking cluster health: {ErrorMessage}", ex.Message);
+                    }
+
                 }
                 catch (Exception ex)
                 {
