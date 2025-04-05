@@ -21,6 +21,7 @@ namespace PdfProcessingService.Services
         private readonly IElasticsearchService _elasticsearchService;
         private readonly ILogger<TxtService> _logger;
         private readonly ProcessingSettings _settings;
+        private readonly VespaSettings _vespaSettings;
 
         // Default chunk size of 1MB if not configured
         private const int DefaultChunkSizeInBytes = 9 * 1024 * 1024;
@@ -31,11 +32,14 @@ namespace PdfProcessingService.Services
         public TxtService(
             IElasticsearchService elasticsearchService,
             IOptions<ProcessingSettings> settings,
-            ILogger<TxtService> logger)
+            ILogger<TxtService> logger,
+            VespaSettings vespaSettings)
+
         {
             _elasticsearchService = elasticsearchService;
             _logger = logger;
             _settings = settings.Value;
+            _vespaSettings = vespaSettings;
         }
 
         /// <summary>
@@ -842,6 +846,209 @@ namespace PdfProcessingService.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error sending chunk {SequenceNumber}/{TotalChunks} to plugin",
+                    chunk.SequenceNumber, chunk.TotalChunks);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Processes a TXT file and sends its chunks to the Vespa plugin endpoint.
+        /// This method is identical in logic to ProcessFileAsyncVersion3 but targets Vespa.
+        /// </summary>
+        public async Task<ProcessingResponse> ProcessFileAsyncVespa(string filePath)
+        {
+            var overallStopwatch = Stopwatch.StartNew();
+            var response = new ProcessingResponse
+            {
+                Id = Guid.NewGuid().ToString(),
+                FilePath = filePath,
+                Success = false,
+                Benchmarks = new Dictionary<string, double>()
+            };
+
+            try
+            {
+                _logger.LogInformation("Starting TXT processing via Vespa plugin for file: {FilePath}", filePath);
+
+                // Validate that the file exists
+                if (!File.Exists(filePath))
+                {
+                    response.ErrorMessage = $"File does not exist: {filePath}";
+                    return response;
+                }
+
+                // Validate file extension
+                string extension = Path.GetExtension(filePath).ToLowerInvariant();
+                if (extension != ".txt")
+                {
+                    response.ErrorMessage = $"Invalid file extension: {extension}. Expected .txt";
+                    return response;
+                }
+
+                // Get file info
+                var fileInfo = new FileInfo(filePath);
+                response.FileSizeInBytes = fileInfo.Length;
+
+                // Generate a unique file identifier
+                var fileId = $"{Path.GetFileNameWithoutExtension(filePath).Replace(" ", "_")}_{fileInfo.Length}_{fileInfo.LastWriteTimeUtc.Ticks}";
+
+                // Determine chunk size from VespaSettings (5MB per chunk)
+                int chunkSizeInBytes = _vespaSettings.ChunkSizeInBytes;
+
+                // STEP 1: Split the file into chunks (using the parallel method if applicable)
+                var readStopwatch = Stopwatch.StartNew();
+                List<DocumentChunk> chunks = await ChunkTextFileParallelAsyncVersion2(filePath, fileId, chunkSizeInBytes);
+                readStopwatch.Stop();
+                response.Benchmarks["FileReadTime"] = readStopwatch.Elapsed.TotalSeconds;
+                _logger.LogInformation("Finished reading file. Time taken: {ReadTime} seconds", readStopwatch.Elapsed.TotalSeconds);
+
+                response.ChunkCount = chunks.Count;
+
+                // STEP 2: Send the chunks to the Vespa plugin in batches using BulkBatchSize
+                var indexStopwatch = Stopwatch.StartNew();
+                int maxBatchSize = _vespaSettings.BulkBatchSize;
+                int batchCount = (int)Math.Ceiling(chunks.Count / (double)maxBatchSize);
+                var indexTasks = new List<Task<bool>>();
+
+                for (int i = 0; i < chunks.Count; i += maxBatchSize)
+                {
+                    var batch = chunks.Skip(i).Take(maxBatchSize).ToList();
+                    _logger.LogInformation("Indexing batch {CurrentBatch}/{TotalBatches} with {ChunkCount} chunks via Vespa plugin",
+                        (i / maxBatchSize) + 1, batchCount, batch.Count);
+
+                    var tasksForThisBatch = batch.Select(chunk => SendChunkToVespaPluginAsync(chunk)).ToList();
+                    indexTasks.AddRange(tasksForThisBatch);
+
+                    // Limit parallel tasks according to configuration or default value of 4
+                    int maxParallel = _settings.MaxParallelism > 0 ? _settings.MaxParallelism : 4;
+                    while (indexTasks.Count >= maxParallel)
+                    {
+                        var completedTask = await Task.WhenAny(indexTasks);
+                        indexTasks.Remove(completedTask);
+
+                        if (!await completedTask)
+                        {
+                            response.ErrorMessage = "Failed to index one of the chunks via Vespa plugin.";
+                            return response;
+                        }
+                    }
+                }
+
+                // Wait for any remaining tasks to complete
+                var results = await Task.WhenAll(indexTasks);
+                if (results.Any(r => !r))
+                {
+                    response.ErrorMessage = "Failed to index one or more chunks via Vespa plugin.";
+                    return response;
+                }
+
+                indexStopwatch.Stop();
+                response.Benchmarks["IndexingTime"] = indexStopwatch.Elapsed.TotalSeconds;
+                _logger.LogInformation("Finished sending data to Vespa plugin. Time taken: {IndexTime} seconds", indexStopwatch.Elapsed.TotalSeconds);
+
+                // Finalize response
+                response.Success = true;
+                response.PageCount = 1; // TXT files do not have pages
+
+                overallStopwatch.Stop();
+                response.ProcessingTimeInSeconds = overallStopwatch.Elapsed.TotalSeconds;
+                _logger.LogInformation("TXT processing via Vespa plugin completed successfully: {FilePath}, Chunks: {ChunkCount}", filePath, chunks.Count);
+
+                return response;
+            }
+            catch (Exception ex)
+            {
+                overallStopwatch.Stop();
+                response.ProcessingTimeInSeconds = overallStopwatch.Elapsed.TotalSeconds;
+                response.ErrorMessage = $"Error processing TXT via Vespa plugin: {ex.Message}";
+                _logger.LogError(ex, "Error processing TXT file via Vespa plugin: {FilePath}", filePath);
+                return response;
+            }
+        }
+
+        /// <summary>
+        /// Sends a single chunk as JSON to the Vespa plugin endpoint.
+        /// Assumes that Vespa is listening on the endpoint: {VespaSettings.Url}/{VespaSettings.IndexName}/_vespa_index.
+        /// </summary>
+        private async Task<bool> SendChunkToVespaPluginAsync(DocumentChunk chunk)
+        {
+            try
+            {
+                // Prepare JSON payload with chunk data
+                var bodyObject = new
+                {
+                    content = chunk.Content,
+                    fileIdentifier = chunk.FileIdentifier,
+                    fileName = chunk.FileName,
+                    sequenceNumber = chunk.SequenceNumber,
+                    totalChunks = chunk.TotalChunks
+                };
+                var json = JsonSerializer.Serialize(bodyObject);
+
+                // Create an HttpClient with the specified connection timeout
+                using var httpClient = new HttpClient
+                {
+                    Timeout = TimeSpan.FromSeconds(_vespaSettings.ConnectionTimeout)
+                };
+
+                string url = _vespaSettings.Url;
+                if (!url.StartsWith("http://") && !url.StartsWith("https://"))
+                {
+                    url = "http://" + url;
+                }
+                // Build the Vespa endpoint using the IndexName from settings
+                var vespaUrl = $"{url}/custom-indexing";
+
+                _logger.LogDebug("Sending chunk {SequenceNumber}/{TotalChunks} to Vespa plugin", chunk.SequenceNumber, chunk.TotalChunks);
+
+                using var requestContent = new StringContent(json, Encoding.UTF8, "application/json");
+                var stopwatch = Stopwatch.StartNew();
+                var response = await httpClient.PostAsync(vespaUrl, requestContent);
+                stopwatch.Stop();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    string responseBody = await response.Content.ReadAsStringAsync();
+                    _logger.LogError("Failed to POST chunk {SequenceNumber}/{TotalChunks} to {VespaUrl}. Status: {StatusCode}, Response: {Response}",
+                        chunk.SequenceNumber, chunk.TotalChunks, vespaUrl, response.StatusCode, responseBody);
+                    return false;
+                }
+
+                string responseContent = await response.Content.ReadAsStringAsync();
+                using JsonDocument jsonDoc = JsonDocument.Parse(responseContent);
+
+                if (jsonDoc.RootElement.TryGetProperty("indexing_success", out JsonElement successElement) &&
+                    successElement.GetBoolean())
+                {
+                    string docNumberInfo = "";
+                    if (jsonDoc.RootElement.TryGetProperty("document_number", out JsonElement docNumElement) &&
+                        jsonDoc.RootElement.TryGetProperty("total_processed", out JsonElement totalElement))
+                    {
+                        docNumberInfo = $"(Document #{docNumElement.GetInt32()} of {totalElement.GetInt32()} indexed)";
+                    }
+                    string processingTimeInfo = "";
+                    if (jsonDoc.RootElement.TryGetProperty("processing_time_ms", out JsonElement timeElement))
+                    {
+                        processingTimeInfo = $"in {timeElement.GetInt64()}ms";
+                    }
+                    else
+                    {
+                        processingTimeInfo = $"in {stopwatch.ElapsedMilliseconds}ms";
+                    }
+                    _logger.LogInformation("Chunk {SequenceNumber}/{TotalChunks} indexed successfully {ProcessingTime} {DocInfo}",
+                        chunk.SequenceNumber, chunk.TotalChunks, processingTimeInfo, docNumberInfo);
+                    return true;
+                }
+                else
+                {
+                    _logger.LogWarning("Chunk {SequenceNumber}/{TotalChunks} may not be indexed properly by Vespa. Response: {Response}",
+                        chunk.SequenceNumber, chunk.TotalChunks, responseContent);
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending chunk {SequenceNumber}/{TotalChunks} to Vespa plugin",
                     chunk.SequenceNumber, chunk.TotalChunks);
                 return false;
             }

@@ -64,6 +64,24 @@ namespace PdfProcessingService.Controllers
             return Ok(result);
         }
 
+        [HttpPost("process/vespa")]
+        public async Task<IActionResult> ProcessTxtVespa([FromBody] ProcessingRequest request)
+        {
+            _logger.LogInformation("Request to process TXT file via Vespa plugin: {FilePath}", request.Path);
+
+            var result = await _txtService.ProcessFileAsyncVespa(request.Path);
+
+            if (!result.Success)
+            {
+                _logger.LogWarning("Failed to process TXT file via Vespa plugin: {FilePath}. Error: {Error}",
+                    request.Path, result.ErrorMessage);
+                return BadRequest(result);
+            }
+
+            return Ok(result);
+        }
+
+
         [HttpPost("download")]
         public async Task<IActionResult> DownloadFile([FromBody] DownloadRequest request)
         {
