@@ -87,6 +87,8 @@ public class Program
         builder.Services.Configure<ProcessingSettings>(
             builder.Configuration.GetSection("PdfProcessingSettings"));
         builder.Services.AddScoped<FileDownloaderService>();
+        builder.Services.Configure<VespaSettings>(
+            builder.Configuration.GetSection("VespaSettings"));
 
         // Register application services
         builder.Services.AddSingleton<IElasticsearchService, ElasticsearchService>();

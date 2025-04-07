@@ -33,13 +33,13 @@ namespace PdfProcessingService.Services
             IElasticsearchService elasticsearchService,
             IOptions<ProcessingSettings> settings,
             ILogger<TxtService> logger,
-            VespaSettings vespaSettings)
+            IOptions<VespaSettings> vespaOptions)
 
         {
             _elasticsearchService = elasticsearchService;
             _logger = logger;
             _settings = settings.Value;
-            _vespaSettings = vespaSettings;
+            _vespaSettings = vespaOptions.Value;
         }
 
         /// <summary>
@@ -346,21 +346,19 @@ namespace PdfProcessingService.Services
                 Id = Guid.NewGuid().ToString(),
                 FilePath = filePath,
                 Success = false,
-                Benchmarks = []
+                Benchmarks = new Dictionary<string, double>()
             };
 
             try
             {
                 _logger.LogInformation("Starting TXT processing for file: {FilePath}", filePath);
 
-                // Validate the file exists
+                // בדיקת קיום הקובץ וסיומת תקינה
                 if (!File.Exists(filePath))
                 {
                     response.ErrorMessage = $"File does not exist: {filePath}";
                     return response;
                 }
-
-                // Validate file extension
                 string extension = Path.GetExtension(filePath).ToLowerInvariant();
                 if (extension != ".txt")
                 {
@@ -368,75 +366,93 @@ namespace PdfProcessingService.Services
                     return response;
                 }
 
-                // Get file info
+                // קבלת מידע על הקובץ וזיהוי ייחודי
                 var fileInfo = new FileInfo(filePath);
                 response.FileSizeInBytes = fileInfo.Length;
-
-                // Generate a unique identifier for the file
                 var fileId = $"{Path.GetFileNameWithoutExtension(filePath).Replace(" ", "_")}_{fileInfo.Length}_{fileInfo.LastWriteTimeUtc.Ticks}";
 
-                // Get chunk size from settings or use default
+                // קביעת גודל צ'אנק מההגדרות או ברירת מחדל
                 int chunkSizeInBytes = _settings.ChunkSizeInBytes > 0 ? _settings.ChunkSizeInBytes : DefaultChunkSizeInBytes;
 
-                // -------------------------------
-                // STEP 1: Read and chunk the file
-                // -------------------------------
+                // STEP 1: קריאה ועיבוד – חלוקת הקובץ לצ'אנקים
                 var readStopwatch = Stopwatch.StartNew();
-                List<DocumentChunk> chunks = await ChunkTextFileParallelAsyncVersion2(filePath, fileId, chunkSizeInBytes);
+                List<DocumentChunk> chunks = await ChunkTextFileAsync(filePath, fileId, chunkSizeInBytes);
                 readStopwatch.Stop();
+                response.Benchmarks["FileReadTime"] = readStopwatch.Elapsed.TotalSeconds;
                 _logger.LogInformation("Finished reading file. Time taken: {ReadTime} seconds", readStopwatch.Elapsed.TotalSeconds);
-
                 response.ChunkCount = chunks.Count;
 
-                // -------------------------------
-                // STEP 2: Bulk index the chunks into Elasticsearch
-                // -------------------------------
-                var indexStopwatch = Stopwatch.StartNew();
-
-                var maxBatchSize = 10; // Batch size for indexing
-                var batchCount = (int)Math.Ceiling(chunks.Count / (double)maxBatchSize);
-                var indexTasks = new List<Task<bool>>();
-
+                // STEP 2: אינדוקס – שליחת הצ'אנקים ל-Elasticsearch כולל רענון ואימות זמינות
+                var indexingStopwatch = Stopwatch.StartNew();
+                var maxBatchSize = 10; // הגבלת גודל באצ'
                 for (int i = 0; i < chunks.Count; i += maxBatchSize)
                 {
                     var batch = chunks.Skip(i).Take(maxBatchSize).ToList();
                     _logger.LogInformation("Indexing batch {CurrentBatch}/{TotalBatches} with {ChunkCount} chunks",
-                        (i / maxBatchSize) + 1, batchCount, batch.Count);
+                        (i / maxBatchSize) + 1, (chunks.Count / maxBatchSize) + 1, batch.Count);
 
-                    indexTasks.Add(_elasticsearchService.BulkIndexChunksAsync(batch));
-
-                    // Limit parallel indexing to _settings.MaxParallelism tasks concurrently.
-                    if (indexTasks.Count >= _settings.MaxParallelism)
+                    var indexResult = await _elasticsearchService.BulkIndexChunksAsync(batch);
+                    if (!indexResult)
                     {
-                        var completedTask = await Task.WhenAny(indexTasks);
-                        indexTasks.Remove(completedTask);
-                        if (!await completedTask)
-                        {
-                            response.ErrorMessage = "Failed to index batch";
-                            return response;
-                        }
+                        response.ErrorMessage = $"Failed to index batch {(i / maxBatchSize) + 1}/{(chunks.Count / maxBatchSize) + 1}";
+                        return response;
                     }
                 }
 
-                // Wait for any remaining indexing tasks to complete.
-                var results = await Task.WhenAll(indexTasks);
-                if (results.Any(r => !r))
+                // ביצוע רענון לאינדקס כדי לוודא שהמסמכים זמינים לחיפוש
+                try
                 {
-                    response.ErrorMessage = "Failed to index one or more batches";
-                    return response;
-                }
-                indexStopwatch.Stop();
-                _logger.LogInformation("Finished indexing to Elasticsearch. Time taken: {IndexTime} seconds", indexStopwatch.Elapsed.TotalSeconds);
+                    // נניח שהגדרות _settings.Url מכילות את כתובת ה-Elasticsearch
+                    string url = _settings.Url;
+                    if (!url.StartsWith("http://") && !url.StartsWith("https://"))
+                    {
+                        url = "http://" + url;
+                    }
+                    using var httpClient = new HttpClient();
+                    _logger.LogInformation("Requesting Elasticsearch refresh to ensure all documents are searchable");
+                    var refreshUrl = $"{url}/target_index/_refresh";
+                    await httpClient.PostAsync(refreshUrl, null);
 
-                // -------------------------------
-                // Finalize response
-                // -------------------------------
+                    // בדיקת ספירת המסמכים באינדקס
+                    var countUrl = $"{url}/target_index/_count";
+                    var countResponse = await httpClient.GetAsync(countUrl);
+                    if (countResponse.IsSuccessStatusCode)
+                    {
+                        string countContent = await countResponse.Content.ReadAsStringAsync();
+                        using JsonDocument jsonDoc = JsonDocument.Parse(countContent);
+                        if (jsonDoc.RootElement.TryGetProperty("count", out JsonElement countElement))
+                        {
+                            int documentCount = countElement.GetInt32();
+                            if (documentCount == chunks.Count)
+                            {
+                                _logger.LogInformation("ELASTICSEARCH INDEXING COMPLETE: All {ChunkCount} chunks were successfully indexed and verified", chunks.Count);
+                                response.Benchmarks["IndexedDocumentCount"] = documentCount;
+                            }
+                            else
+                            {
+                                _logger.LogWarning("ELASTICSEARCH INDEXING INCOMPLETE: Expected {ChunkCount} chunks but found {DocumentCount} documents", chunks.Count, documentCount);
+                                response.Benchmarks["ExpectedCount"] = chunks.Count;
+                                response.Benchmarks["ActualCount"] = documentCount;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Unable to verify final document count in Elasticsearch: {ErrorMessage}", ex.Message);
+                }
+
+                indexingStopwatch.Stop();
+                response.Benchmarks["CompleteIndexingTime"] = indexingStopwatch.Elapsed.TotalSeconds;
+                _logger.LogInformation("Complete indexing time (including bulk, refresh & availability check): {IndexTime} seconds", indexingStopwatch.Elapsed.TotalSeconds);
+
+                // סיום התהליך
                 response.Success = true;
                 response.PageCount = 1; // TXT files don't have pages
-
                 overallStopwatch.Stop();
                 response.ProcessingTimeInSeconds = overallStopwatch.Elapsed.TotalSeconds;
                 _logger.LogInformation("TXT processing completed successfully: {FilePath}, Chunks: {ChunkCount}", filePath, chunks.Count);
+
                 return response;
             }
             catch (Exception ex)
@@ -448,6 +464,7 @@ namespace PdfProcessingService.Services
                 return response;
             }
         }
+
 
 
         /// <summary>
@@ -577,14 +594,12 @@ namespace PdfProcessingService.Services
             {
                 _logger.LogInformation("Starting TXT processing (v3) for file: {FilePath}", filePath);
 
-                // בדיקת קיום הקובץ
+                // בדיקת קיום הקובץ וסיומת תקינה
                 if (!File.Exists(filePath))
                 {
                     response.ErrorMessage = $"File does not exist: {filePath}";
                     return response;
                 }
-
-                // בדיקת סיומת
                 string extension = Path.GetExtension(filePath).ToLowerInvariant();
                 if (extension != ".txt")
                 {
@@ -592,59 +607,44 @@ namespace PdfProcessingService.Services
                     return response;
                 }
 
-                // מידע על הקובץ
+                // מידע על הקובץ וזיהוי ייחודי
                 var fileInfo = new FileInfo(filePath);
                 response.FileSizeInBytes = fileInfo.Length;
-
-                // זיהוי ייחודי
                 var fileId = $"{Path.GetFileNameWithoutExtension(filePath).Replace(" ", "_")}_{fileInfo.Length}_{fileInfo.LastWriteTimeUtc.Ticks}";
 
-                // גודל צ'אנק מתוך ההגדרות או ברירת מחדל
+                // קביעת גודל צ'אנק – מההגדרות או ברירת מחדל
                 int chunkSizeInBytes = _settings.ChunkSizeInBytes > 0 ? _settings.ChunkSizeInBytes : DefaultChunkSizeInBytes;
 
-                // -------------------------------
-                // STEP 1: פיצול הקובץ לצ'אנקים
-                // -------------------------------
+                // STEP 1: קריאה ועיבוד (חלוקת הקובץ לצ'אנקים)
                 var readStopwatch = Stopwatch.StartNew();
                 List<DocumentChunk> chunks = await ChunkTextFileParallelAsyncVersion2(filePath, fileId, chunkSizeInBytes);
                 readStopwatch.Stop();
                 response.Benchmarks["FileReadTime"] = readStopwatch.Elapsed.TotalSeconds;
                 _logger.LogInformation("Finished reading file. Time taken: {ReadTime} seconds", readStopwatch.Elapsed.TotalSeconds);
-
                 response.ChunkCount = chunks.Count;
 
-                // -------------------------------
-                // STEP 2: שליחת הצ'אנקים ל-plugin
-                // -------------------------------
-                var indexStopwatch = Stopwatch.StartNew();
+                // STEP 2: אינדוקס – מדידה של הזמן הכולל לשליחת הצ'אנקים ל-plugin ואימות זמינותם
+                var indexingStopwatch = Stopwatch.StartNew();
 
-                // נגדיר גודל batch קטן כדי לא להעמיס על המערכת
+                // חלוקת הצ'אנקים לבאטצ'ים ושליחתם ל-plugin
                 var maxBatchSize = 10;
                 var batchCount = (int)Math.Ceiling(chunks.Count / (double)maxBatchSize);
-
-                // נשתמש ברשימת משימות כדי לבצע במקביל (עד גבול מסוים)
                 var indexTasks = new List<Task<bool>>();
-
                 for (int i = 0; i < chunks.Count; i += maxBatchSize)
                 {
                     var batch = chunks.Skip(i).Take(maxBatchSize).ToList();
                     _logger.LogInformation("Indexing batch {CurrentBatch}/{TotalBatches} with {ChunkCount} chunks (v3)",
                         (i / maxBatchSize) + 1, batchCount, batch.Count);
 
-                    // כל batch שולח מספר צ'אנקים במקביל
                     var tasksForThisBatch = batch.Select(chunk => SendChunkToCustomPluginAsync(chunk)).ToList();
                     indexTasks.AddRange(tasksForThisBatch);
 
-                    // הגבלת כמות מקסימלית של משימות שרצות במקביל
-                    // אם לא הגדרת MaxParallelism ב-ProcessingSettings, אפשר לשים ערך ידני, למשל 4
+                    // הגבלת מקביליות – לדוגמה, 4 משימות במקביל
                     var maxParallel = _settings.MaxParallelism > 0 ? _settings.MaxParallelism : 4;
-
-                    // כל עוד יש יותר מדי משימות תלויות ועומס על המערכת, נחכה שמשהו יסיים
                     while (indexTasks.Count >= maxParallel)
                     {
                         var completedTask = await Task.WhenAny(indexTasks);
                         indexTasks.Remove(completedTask);
-
                         if (!await completedTask)
                         {
                             response.ErrorMessage = "Failed to index one of the chunks in the plugin.";
@@ -653,7 +653,6 @@ namespace PdfProcessingService.Services
                     }
                 }
 
-                // חכים לכל המשימות שנשארו
                 var results = await Task.WhenAll(indexTasks);
                 if (results.Any(r => !r))
                 {
@@ -661,7 +660,7 @@ namespace PdfProcessingService.Services
                     return response;
                 }
 
-                // Verify all chunks were successfully indexed in Elasticsearch
+                // אחרי שהצ'אנקים נשלחו, נבצע רענון לאינדקס ואימות זמינות המסמכים
                 try
                 {
                     string url = _settings.Url;
@@ -669,27 +668,21 @@ namespace PdfProcessingService.Services
                     {
                         url = "http://" + url;
                     }
-
                     using var httpClient = new HttpClient();
-
-                    // Force a refresh to make indexed documents visible for search
                     _logger.LogInformation("Requesting Elasticsearch refresh to ensure all documents are searchable");
                     var refreshUrl = $"{url}/target_index/_refresh";
                     await httpClient.PostAsync(refreshUrl, null);
 
-                    // Request count of documents in the index
+                    // בדיקת ספירת המסמכים
                     var countUrl = $"{url}/target_index/_count";
                     var countResponse = await httpClient.GetAsync(countUrl);
-
                     if (countResponse.IsSuccessStatusCode)
                     {
                         string countContent = await countResponse.Content.ReadAsStringAsync();
                         using JsonDocument jsonDoc = JsonDocument.Parse(countContent);
-
                         if (jsonDoc.RootElement.TryGetProperty("count", out JsonElement countElement))
                         {
                             int documentCount = countElement.GetInt32();
-
                             if (documentCount == chunks.Count)
                             {
                                 _logger.LogInformation("ELASTICSEARCH INDEXING COMPLETE: All {ChunkCount} chunks were successfully indexed and verified", chunks.Count);
@@ -697,15 +690,14 @@ namespace PdfProcessingService.Services
                             }
                             else
                             {
-                                _logger.LogWarning("ELASTICSEARCH INDEXING INCOMPLETE: Expected {ChunkCount} chunks but found {DocumentCount} documents",
-                                    chunks.Count, documentCount);
+                                _logger.LogWarning("ELASTICSEARCH INDEXING INCOMPLETE: Expected {ChunkCount} chunks but found {DocumentCount} documents", chunks.Count, documentCount);
                                 response.Benchmarks["ExpectedCount"] = chunks.Count;
                                 response.Benchmarks["ActualCount"] = documentCount;
                             }
                         }
                     }
 
-                    // health check for data avaliability check
+                    // בדיקת בריאות הקלאסטר (optional)
                     try
                     {
                         string healthUrl = $"{url}/_cluster/health/target_index?wait_for_status=green&timeout=30s";
@@ -723,23 +715,19 @@ namespace PdfProcessingService.Services
                     {
                         _logger.LogWarning("Error checking cluster health: {ErrorMessage}", ex.Message);
                     }
-
                 }
                 catch (Exception ex)
                 {
                     _logger.LogWarning("Unable to verify final document count in Elasticsearch: {ErrorMessage}", ex.Message);
                 }
 
-                indexStopwatch.Stop();
-                response.Benchmarks["IndexingTime"] = indexStopwatch.Elapsed.TotalSeconds;
-                _logger.LogInformation("Finished sending data to plugin /_target_index. Time taken: {IndexTime} seconds", indexStopwatch.Elapsed.TotalSeconds);
+                indexingStopwatch.Stop();
+                response.Benchmarks["CompleteIndexingTime"] = indexingStopwatch.Elapsed.TotalSeconds;
+                _logger.LogInformation("Complete indexing time (including bulk, refresh & availability check): {IndexTime} seconds", indexingStopwatch.Elapsed.TotalSeconds);
 
-                // -------------------------------
-                // סיום
-                // -------------------------------
+                // סיום התהליך
                 response.Success = true;
-                response.PageCount = 1; // TXT ללא עמודים
-
+                response.PageCount = 1; // TXT files don't have pages
                 overallStopwatch.Stop();
                 response.ProcessingTimeInSeconds = overallStopwatch.Elapsed.TotalSeconds;
                 _logger.LogInformation("TXT processing (v3) completed successfully: {FilePath}, Chunks: {ChunkCount}", filePath, chunks.Count);
@@ -755,6 +743,7 @@ namespace PdfProcessingService.Services
                 return response;
             }
         }
+
 
         /// <summary>
         /// Sends a single chunk as JSON to the /_custom_index endpoint.
