@@ -744,6 +744,90 @@ namespace PdfProcessingService.Services
             }
         }
 
+        /// <summary>
+        /// Handles processing of a TXT file located on a NAS (Network Attached Storage) server.
+        /// </summary>
+        /// <remarks>
+        /// This method receives a UNC path to a text file stored on a NAS share (e.g., "\\NAS-SERVER\shared\file.txt").
+        /// It performs the following operations:
+        /// 1. Validates that the file exists and has a .txt extension.
+        /// 2. Retrieves file metadata (size, name, last modified time) and constructs a unique file identifier.
+        /// 3. Reads and processes the file in parallel using memory-mapped file access for optimal performance,
+        ///    splitting the content into fixed-size <see cref="DocumentChunk"/> instances.
+        /// 4. Returns all the extracted chunks as part of the HTTP response, without indexing or pushing them elsewhere.
+        /// 
+        /// The file is accessed using the SMB (Server Message Block) protocol over TCP/IP (port 445),
+        /// which is the standard Windows file sharing protocol. SMB handles authentication, file I/O, and transport over the network.
+        /// 
+        /// The function is intended to serve plugin clients that request text extraction directly from NAS files
+        /// and expect the full content to be streamed back in chunked form (rather than pushed to Elasticsearch or Vespa).
+        /// 
+        /// Note: The SMB protocol performance is subject to network conditions, authentication delays, and server load.
+        /// For high-throughput scenarios, consider exposing the NAS via HTTP or copying files to a local temporary folder.
+        /// </remarks>
+        /// <param name="filePath">The full UNC path to the target TXT file on the NAS server.</param>
+        /// <returns>
+        /// A <see cref="ProcessingResponseWithChunks"/> object containing metadata and a list of extracted text chunks.
+        /// </returns>
+        public async Task<ProcessingResponseWithChunks> handlePluginNasProcessingRequest(string filePath)
+        {
+            var overallStopwatch = Stopwatch.StartNew();
+            var response = new ProcessingResponseWithChunks
+            {
+                Id = Guid.NewGuid().ToString(),
+                FilePath = filePath,
+                Success = false,
+                Benchmarks = new Dictionary<string, double>(),
+                Chunks = new List<DocumentChunk>() // מחזיר את כל הצ'אנקים עצמם
+            };
+
+            try
+            {
+                _logger.LogInformation("Starting NAS TXT processing for file: {FilePath}", filePath);
+
+                if (!File.Exists(filePath))
+                {
+                    response.ErrorMessage = $"File does not exist: {filePath}";
+                    return response;
+                }
+
+                string extension = Path.GetExtension(filePath).ToLowerInvariant();
+                if (extension != ".txt")
+                {
+                    response.ErrorMessage = $"Invalid file extension: {extension}. Expected .txt";
+                    return response;
+                }
+
+                var fileInfo = new FileInfo(filePath);
+                response.FileSizeInBytes = fileInfo.Length;
+                var fileId = $"{Path.GetFileNameWithoutExtension(filePath).Replace(" ", "_")}_{fileInfo.Length}_{fileInfo.LastWriteTimeUtc.Ticks}";
+                int chunkSizeInBytes = _settings.ChunkSizeInBytes > 0 ? _settings.ChunkSizeInBytes : DefaultChunkSizeInBytes;
+
+                var readStopwatch = Stopwatch.StartNew();
+                var chunks = await ChunkTextFileParallelAsyncVersion2(filePath, fileId, chunkSizeInBytes);
+                readStopwatch.Stop();
+
+                response.Benchmarks["FileReadTime"] = readStopwatch.Elapsed.TotalSeconds;
+                response.ChunkCount = chunks.Count;
+                response.Chunks = chunks;
+
+                response.Success = true;
+                response.PageCount = 1;
+                overallStopwatch.Stop();
+                response.ProcessingTimeInSeconds = overallStopwatch.Elapsed.TotalSeconds;
+
+                _logger.LogInformation("TXT processing from NAS completed successfully. Chunks: {ChunkCount}", chunks.Count);
+                return response;
+            }
+            catch (Exception ex)
+            {
+                overallStopwatch.Stop();
+                response.ProcessingTimeInSeconds = overallStopwatch.Elapsed.TotalSeconds;
+                response.ErrorMessage = $"Error processing TXT file from NAS: {ex.Message}";
+                _logger.LogError(ex, "Error processing TXT file from NAS: {FilePath}", filePath);
+                return response;
+            }
+        }
 
         /// <summary>
         /// Sends a single chunk as JSON to the /_custom_index endpoint.

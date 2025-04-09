@@ -64,6 +64,23 @@ namespace PdfProcessingService.Controllers
             return Ok(result);
         }
 
+        [HttpPost("pluginManager/processFile")]
+        public async Task<IActionResult> StartProcessFileFromNas([FromBody] ProcessingRequest request)
+        {
+            _logger.LogInformation($".NET service got a request from plugin to start processing from NAS with the file path: {request.Path}");
+
+            var data = await _txtService.handlePluginNasProcessingRequest(request.Path);
+
+            if (!data.Success)
+            {
+                _logger.LogWarning("Failed to process TXT file via custom plugin: {FilePath}. Error: {Error}",
+                    request.Path, data.ErrorMessage);
+                return BadRequest(data);
+            }
+
+            return Ok(data);
+        }
+
         [HttpPost("process/vespa")]
         public async Task<IActionResult> ProcessTxtVespa([FromBody] ProcessingRequest request)
         {
