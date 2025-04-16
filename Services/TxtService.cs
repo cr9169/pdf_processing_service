@@ -781,9 +781,24 @@ namespace PdfProcessingService.Services
                 Chunks = new List<DocumentChunk>() // מחזיר את כל הצ'אנקים עצמם
             };
 
+            // Get initial CPU and heap measurements
+            double cpuOverallStart = GetCurrentCpuUsagePercent();
+            double heapOverallStart = GetCurrentHeapUsagePercent();
+
+            _logger.LogInformation($"[CPU] Overall | Phase: Start | Process CPU Load: {cpuOverallStart:F2}%");
+            _logger.LogInformation($"[HEAP] Overall | Phase: Start | Heap Used: {heapOverallStart:F2}%");
+
             try
             {
                 _logger.LogInformation("Starting NAS TXT processing for file: {FilePath}", filePath);
+
+                // Validation step
+                double cpuValidationStart = GetCurrentCpuUsagePercent();
+                double heapValidationStart = GetCurrentHeapUsagePercent();
+                long validationStartTime = Environment.TickCount;
+
+                _logger.LogInformation($"[CPU] Step: Validation | Phase: Start | Process CPU Load: {cpuValidationStart:F2}%");
+                _logger.LogInformation($"[HEAP] Step: Validation | Phase: Start | Heap Used: {heapValidationStart:F2}%");
 
                 if (!File.Exists(filePath))
                 {
@@ -803,18 +818,90 @@ namespace PdfProcessingService.Services
                 var fileId = $"{Path.GetFileNameWithoutExtension(filePath).Replace(" ", "_")}_{fileInfo.Length}_{fileInfo.LastWriteTimeUtc.Ticks}";
                 int chunkSizeInBytes = _settings.ChunkSizeInBytes > 0 ? _settings.ChunkSizeInBytes : DefaultChunkSizeInBytes;
 
-                var readStopwatch = Stopwatch.StartNew();
-                var chunks = await ChunkTextFileParallelAsyncVersion2(filePath, fileId, chunkSizeInBytes);
-                readStopwatch.Stop();
+                double cpuValidationEnd = GetCurrentCpuUsagePercent();
+                double heapValidationEnd = GetCurrentHeapUsagePercent();
+                long validationDuration = Environment.TickCount - validationStartTime;
+                double cpuValidationAvg = (cpuValidationStart + cpuValidationEnd) / 2;
+                double heapValidationAvg = (heapValidationStart + heapValidationEnd) / 2;
 
-                response.Benchmarks["FileReadTime"] = readStopwatch.Elapsed.TotalSeconds;
+                _logger.LogInformation($"[CPU] Step: Validation | Phase: End | Process CPU Load: {cpuValidationEnd:F2}%");
+                _logger.LogInformation($"[HEAP] Step: Validation | Phase: End | Heap Used: {heapValidationEnd:F2}%");
+                _logger.LogInformation($"[CPU] Step: Validation | Phase: Avg | Duration: {validationDuration / 1000.0:F2}s | Avg CPU: {cpuValidationAvg:F2}%");
+                _logger.LogInformation($"[HEAP] Validation | Start: {heapValidationStart:F2}% | End: {heapValidationEnd:F2}% | Avg: {heapValidationAvg:F2}%");
+
+                response.Benchmarks["ValidationCpuPercent"] = cpuValidationAvg;
+                response.Benchmarks["ValidationHeapPercent"] = heapValidationAvg;
+                response.Benchmarks["ValidationTimeSec"] = validationDuration / 1000.0;
+
+                // File reading step
+                double cpuReadStart = GetCurrentCpuUsagePercent();
+                double heapReadStart = GetCurrentHeapUsagePercent();
+                long readStartTime = Environment.TickCount;
+
+                _logger.LogInformation($"[CPU] Step: FileRead | Phase: Start | Process CPU Load: {cpuReadStart:F2}%");
+                _logger.LogInformation($"[HEAP] Step: FileRead | Phase: Start | Heap Used: {heapReadStart:F2}%");
+
+                var chunks = await ChunkTextFileParallelAsyncVersion2(filePath, fileId, chunkSizeInBytes);
+
+                double cpuReadEnd = GetCurrentCpuUsagePercent();
+                double heapReadEnd = GetCurrentHeapUsagePercent();
+                long readDuration = Environment.TickCount - readStartTime;
+                double cpuReadAvg = (cpuReadStart + cpuReadEnd) / 2;
+                double heapReadAvg = (heapReadStart + heapReadEnd) / 2;
+
+                _logger.LogInformation($"[CPU] Step: FileRead | Phase: End | Process CPU Load: {cpuReadEnd:F2}%");
+                _logger.LogInformation($"[HEAP] Step: FileRead | Phase: End | Heap Used: {heapReadEnd:F2}%");
+                _logger.LogInformation($"[CPU] Step: FileRead | Phase: Avg | Duration: {readDuration / 1000.0:F2}s | Avg CPU: {cpuReadAvg:F2}%");
+                _logger.LogInformation($"[HEAP] FileRead | Start: {heapReadStart:F2}% | End: {heapReadEnd:F2}% | Avg: {heapReadAvg:F2}%");
+
+                response.Benchmarks["FileReadCpuPercent"] = cpuReadAvg;
+                response.Benchmarks["FileReadHeapPercent"] = heapReadAvg;
+                response.Benchmarks["FileReadTimeSec"] = readDuration / 1000.0;
+
                 response.ChunkCount = chunks.Count;
                 response.Chunks = chunks;
 
+                // Prepare response step
+                double cpuPrepareResponseStart = GetCurrentCpuUsagePercent();
+                double heapPrepareResponseStart = GetCurrentHeapUsagePercent();
+                long prepareResponseStartTime = Environment.TickCount;
+
+                _logger.LogInformation($"[CPU] Step: PrepareResponse | Phase: Start | Process CPU Load: {cpuPrepareResponseStart:F2}%");
+                _logger.LogInformation($"[HEAP] Step: PrepareResponse | Phase: Start | Heap Used: {heapPrepareResponseStart:F2}%");
+
                 response.Success = true;
                 response.PageCount = 1;
+
+                double cpuPrepareResponseEnd = GetCurrentCpuUsagePercent();
+                double heapPrepareResponseEnd = GetCurrentHeapUsagePercent();
+                long prepareResponseDuration = Environment.TickCount - prepareResponseStartTime;
+                double cpuPrepareResponseAvg = (cpuPrepareResponseStart + cpuPrepareResponseEnd) / 2;
+                double heapPrepareResponseAvg = (heapPrepareResponseStart + heapPrepareResponseEnd) / 2;
+
+                _logger.LogInformation($"[CPU] Step: PrepareResponse | Phase: End | Process CPU Load: {cpuPrepareResponseEnd:F2}%");
+                _logger.LogInformation($"[HEAP] Step: PrepareResponse | Phase: End | Heap Used: {heapPrepareResponseEnd:F2}%");
+                _logger.LogInformation($"[CPU] Step: PrepareResponse | Phase: Avg | Duration: {prepareResponseDuration / 1000.0:F2}s | Avg CPU: {cpuPrepareResponseAvg:F2}%");
+                _logger.LogInformation($"[HEAP] PrepareResponse | Start: {heapPrepareResponseStart:F2}% | End: {heapPrepareResponseEnd:F2}% | Avg: {heapPrepareResponseAvg:F2}%");
+
+                response.Benchmarks["PrepareResponseCpuPercent"] = cpuPrepareResponseAvg;
+                response.Benchmarks["PrepareResponseHeapPercent"] = heapPrepareResponseAvg;
+                response.Benchmarks["PrepareResponseTimeSec"] = prepareResponseDuration / 1000.0;
+
+                // Overall metrics
                 overallStopwatch.Stop();
+                double cpuOverallEnd = GetCurrentCpuUsagePercent();
+                double heapOverallEnd = GetCurrentHeapUsagePercent();
+                double cpuOverallAvg = (cpuOverallStart + cpuOverallEnd) / 2;
+                double heapOverallAvg = (heapOverallStart + heapOverallEnd) / 2;
+
+                _logger.LogInformation($"[CPU] Overall | Phase: End | Process CPU Load: {cpuOverallEnd:F2}%");
+                _logger.LogInformation($"[HEAP] Overall | Phase: End | Heap Used: {heapOverallEnd:F2}%");
+                _logger.LogInformation($"[CPU] Overall | Phase: Avg | Avg CPU: {cpuOverallAvg:F2}%");
+                _logger.LogInformation($"[HEAP] Overall | Start: {heapOverallStart:F2}% | End: {heapOverallEnd:F2}% | Avg: {heapOverallAvg:F2}%");
+
                 response.ProcessingTimeInSeconds = overallStopwatch.Elapsed.TotalSeconds;
+                response.Benchmarks["TotalCpuAvgPercent"] = cpuOverallAvg;
+                response.Benchmarks["TotalHeapAvgPercent"] = heapOverallAvg;
 
                 _logger.LogInformation("TXT processing from NAS completed successfully. Chunks: {ChunkCount}", chunks.Count);
                 return response;
@@ -826,6 +913,88 @@ namespace PdfProcessingService.Services
                 response.ErrorMessage = $"Error processing TXT file from NAS: {ex.Message}";
                 _logger.LogError(ex, "Error processing TXT file from NAS: {FilePath}", filePath);
                 return response;
+            }
+        }
+
+        /// <summary>
+        /// Gets the current CPU usage percentage for the .NET process
+        /// </summary>
+        private double GetCurrentCpuUsagePercent()
+        {
+            try
+            {
+                using var currentProcess = Process.GetCurrentProcess();
+
+                // This approach gives an approximate measure - for more accuracy,
+                // take readings over time and calculate the delta
+                TimeSpan totalProcessorTime = currentProcess.TotalProcessorTime;
+
+                // Get number of logical processors
+                int processorCount = Environment.ProcessorCount;
+
+                // Calculate CPU usage as a percentage of available processing power
+                // across all cores (max is 100% per core * number of cores)
+                double cpuUsage = totalProcessorTime.TotalSeconds /
+                                 (Environment.TickCount / 1000.0) /
+                                 processorCount * 100;
+
+                // Ensure we don't return more than 100%
+                return Math.Min(100, Math.Max(0, cpuUsage));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Failed to get CPU usage: {Message}", ex.Message);
+                return -1; // Return -1 to indicate error
+            }
+        }
+
+        /// <summary>
+        /// Gets the current heap memory usage percentage
+        /// </summary>
+        private double GetCurrentHeapUsagePercent()
+        {
+            try
+            {
+                // Get current memory usage
+                long totalMemoryBytes = GC.GetTotalMemory(false);
+
+                // Get physical memory available on the system
+                long physicalMemoryBytes = GetTotalPhysicalMemory();
+
+                // Return as a percentage of physical memory
+                return (double)totalMemoryBytes / physicalMemoryBytes * 100.0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Failed to get heap usage: {Message}", ex.Message);
+                return -1; // Return -1 to indicate error
+            }
+        }
+
+        /// <summary>
+        /// Gets the total physical memory (RAM) available on the system in bytes
+        /// </summary>
+        private long GetTotalPhysicalMemory()
+        {
+            try
+            {
+                // Use PerformanceCounter to get total physical memory
+                using var counter = new PerformanceCounter("Memory", "Available Bytes");
+                long availableBytes = Convert.ToInt64(counter.NextValue());
+
+                // Approximate total memory from working set limits
+                long workingSetLimit = Environment.WorkingSet;
+
+                // Use a reasonable default if we can't get a good value
+                const long defaultMemory = 8L * 1024 * 1024 * 1024; // 8 GB
+
+                // Use the larger of the available metrics, or fall back to default
+                return Math.Max(availableBytes * 4, Math.Max(workingSetLimit * 4, defaultMemory));
+            }
+            catch
+            {
+                // Fall back to a reasonable default if performance counter fails
+                return 8L * 1024 * 1024 * 1024; // 8 GB
             }
         }
 
