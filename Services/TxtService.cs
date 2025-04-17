@@ -780,10 +780,13 @@ namespace PdfProcessingService.Services
                 Benchmarks = new Dictionary<string, double>(),
                 Chunks = new List<DocumentChunk>() // מחזיר את כל הצ'אנקים עצמם
             };
+            _logger.LogDebug("[DEBUG] Entering handlePluginNasProcessingRequest with filePath = {FilePath}", filePath);
 
             // Get initial CPU and heap measurements
             double cpuOverallStart = GetCurrentCpuUsagePercent();
             double heapOverallStart = GetCurrentHeapUsagePercent();
+
+            _logger.LogDebug("[DEBUG] CPU start: {Cpu:F2}%, Heap start: {Heap:F2}%", cpuOverallStart, heapOverallStart);
 
             _logger.LogInformation($"[CPU] Overall | Phase: Start | Process CPU Load: {cpuOverallStart:F2}%");
             _logger.LogInformation($"[HEAP] Overall | Phase: Start | Heap Used: {heapOverallStart:F2}%");
