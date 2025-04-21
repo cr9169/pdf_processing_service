@@ -91,7 +91,6 @@ public class Program
 
         // Register application services
         builder.Services.AddSingleton<IElasticsearchService, ElasticsearchService>();
-        builder.Services.AddScoped<IExtractService, PdfService>();
         builder.Services.AddScoped<TxtService>();
 
         // Configure CORS
