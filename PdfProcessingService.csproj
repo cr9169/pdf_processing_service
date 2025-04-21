@@ -9,11 +9,6 @@
   <ItemGroup>
     <PackageReference Include="Aspose.PDF" Version="25.3.0" />
     <PackageReference Include="Elastic.Clients.Elasticsearch" Version="8.17.2" />
-    <PackageReference Include="Google.Apis.Auth" Version="1.69.0" />
-    <PackageReference Include="Google.Apis.Drive.v3" Version="1.69.0.3703" />
-    <PackageReference Include="Google.Apis.Oauth2.v2" Version="1.68.0.1869" />
-    <PackageReference Include="itext7" Version="8.0.2" />
-    <PackageReference Include="PdfPig" Version="0.1.8" />
     <PackageReference Include="Serilog.AspNetCore" Version="8.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="5.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />

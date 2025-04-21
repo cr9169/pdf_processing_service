@@ -86,7 +86,6 @@ public class Program
             builder.Configuration.GetSection("ElasticsearchSettings"));
         builder.Services.Configure<ProcessingSettings>(
             builder.Configuration.GetSection("PdfProcessingSettings"));
-        builder.Services.AddScoped<FileDownloaderService>();
         builder.Services.Configure<VespaSettings>(
             builder.Configuration.GetSection("VespaSettings"));
 
